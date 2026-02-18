@@ -327,6 +327,7 @@ function updateScrollSpeed() {
   scrollSpeed = parseInt(document.getElementById('scroll-speed-slider').value);
   var lbl = document.getElementById('scroll-speed-val');
   if (lbl) lbl.textContent = scrollSpeed + 'px/s';
+  pushTypoSync();
 }
 
 // ════════════════════════════════════════════════════════════
@@ -408,6 +409,48 @@ function toast(msg) {
 //  SYNC  (laptop → Netlify Blobs ← phone)
 // ════════════════════════════════════════════════════════════
 
+// ── Typography sync (all devices) ────────────────────────────
+// Debounced so slider dragging doesn't spam Redis
+var _typoTimer = null;
+function pushTypoSync() {
+  clearTimeout(_typoTimer);
+  _typoTimer = setTimeout(function() {
+    var fontSize   = parseInt(document.documentElement.style.getPropertyValue('--sentence-size'))   || 46;
+    var lineHeight = parseInt(document.documentElement.style.getPropertyValue('--sentence-spacing')) || 20;
+    fetch('/api/sync-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'typo', data: { fontSize: fontSize, lineHeight: lineHeight, scrollSpeed: scrollSpeed } })
+    }).catch(function() {});
+  }, 300);
+}
+
+// Apply incoming typography to this device — updates CSS vars + all slider UIs
+function applyTypoState(typo) {
+  if (!typo) return;
+  if (typo.fontSize) {
+    document.documentElement.style.setProperty('--sentence-size', typo.fontSize + 'px');
+    var fs = document.getElementById('font-size-slider');
+    if (fs) { fs.value = typo.fontSize; document.getElementById('font-size-val').textContent = typo.fontSize + 'px'; }
+    var rfs = document.getElementById('remote-font-slider');
+    if (rfs) rfs.value = typo.fontSize;
+  }
+  if (typo.lineHeight) {
+    document.documentElement.style.setProperty('--sentence-spacing', typo.lineHeight + 'px');
+    var lh = document.getElementById('line-height-slider');
+    if (lh) { lh.value = typo.lineHeight; document.getElementById('line-height-val').textContent = typo.lineHeight + 'px'; }
+    var rlh = document.getElementById('remote-spacing-slider');
+    if (rlh) rlh.value = typo.lineHeight;
+  }
+  if (typo.scrollSpeed) {
+    scrollSpeed = typo.scrollSpeed;
+    var ss = document.getElementById('scroll-speed-slider');
+    if (ss) { ss.value = typo.scrollSpeed; document.getElementById('scroll-speed-val').textContent = typo.scrollSpeed + 'px/s'; }
+    var rss = document.getElementById('remote-scroll-slider');
+    if (rss) { rss.value = typo.scrollSpeed; document.getElementById('remote-scroll-val').textContent = typo.scrollSpeed + 'px/s'; }
+  }
+}
+
 // ── Laptop side ──────────────────────────────────────────────
 function pushSync(type, data) {
   if (isRemote) return;
@@ -437,7 +480,7 @@ async function pollCommands() {
         }
       }
     }
-    // Apply edits from phone to laptop DOM
+    // Apply edits + typo from remote devices
     var editResp = await fetch('/api/sync-pull?since=9999999999999&sinceEdit=' + lastEditId);
     if (editResp.ok) {
       var data = await editResp.json();
@@ -445,6 +488,7 @@ async function pollCommands() {
         if (edit.id > lastEditId) lastEditId = edit.id;
         applyEdit(edit);
       });
+      applyTypoState(data.typo);
     }
   } catch (_) {}
 }
@@ -472,6 +516,7 @@ async function pollRemote() {
       applyEdit(edit);
     });
 
+    applyTypoState(data.typo);
     setRemoteStatus((data.state && data.state.isListening) ? 'live' : 'ready');
   } catch (_) {
     setRemoteStatus('offline');
@@ -546,10 +591,11 @@ function applyEdit(edit) {
   });
 }
 
-// Phone-local typography (doesn't affect laptop display)
+// Typography change — applies locally and syncs to all other devices
 function applyRemoteTypo(type, val) {
   if (type === 'size')    document.documentElement.style.setProperty('--sentence-size',    val + 'px');
   else                    document.documentElement.style.setProperty('--sentence-spacing', val + 'px');
+  pushTypoSync();
 }
 
 function renderRemoteEntry(entry) {
@@ -604,7 +650,8 @@ function updateRemoteScrollSpeed(val) {
   if (lbl) lbl.textContent = scrollSpeed + 'px/s';
   // keep main admin slider in sync if it exists
   var mainSlider = document.getElementById('scroll-speed-slider');
-  if (mainSlider) { mainSlider.value = val; updateScrollSpeed(); }
+  if (mainSlider) { mainSlider.value = val; document.getElementById('scroll-speed-val').textContent = scrollSpeed + 'px/s'; }
+  pushTypoSync();
 }
 
 function initRemote() {
@@ -654,9 +701,9 @@ function initRemote() {
         '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
       '</select>' +
       '<span class="control-label" style="margin-left:6px">Size</span>' +
-      '<input type="range" class="slider" min="24" max="72" value="46" oninput="applyRemoteTypo(\'size\',this.value)" style="width:80px">' +
+      '<input type="range" class="slider" id="remote-font-slider" min="24" max="72" value="46" oninput="applyRemoteTypo(\'size\',this.value)" style="width:80px">' +
       '<span class="control-label">Spacing</span>' +
-      '<input type="range" class="slider" min="12" max="36" value="20" oninput="applyRemoteTypo(\'spacing\',this.value)" style="width:80px">' +
+      '<input type="range" class="slider" id="remote-spacing-slider" min="12" max="36" value="20" oninput="applyRemoteTypo(\'spacing\',this.value)" style="width:80px">' +
       '<span class="control-label">Scroll</span>' +
       '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="100" oninput="updateRemoteScrollSpeed(this.value)" style="width:80px">' +
       '<span class="slider-val" id="remote-scroll-val">100px/s</span>' +
@@ -1251,6 +1298,7 @@ function applyTypography() {
   // Apply to all existing and future sentences via CSS vars
   document.documentElement.style.setProperty('--sentence-size',    fontSize + 'px');
   document.documentElement.style.setProperty('--sentence-spacing',  lineHeight + 'px');
+  pushTypoSync();
 }
 
 // Init CSS vars on load; block Enter inside editable sentences

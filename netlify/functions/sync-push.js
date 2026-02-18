@@ -43,6 +43,9 @@ exports.handler = async (event) => {
       edits[String(data.entryId)] = { id: data.id, sentences: data.sentences };
       await redis('SET', 'sermon:edits', JSON.stringify(edits));
 
+    } else if (type === 'typo') {
+      await redis('SET', 'sermon:typo', JSON.stringify(data));
+
     } else if (type === 'clear') {
       await redisPipeline(
         ['SET', 'sermon:transcript', '[]'],

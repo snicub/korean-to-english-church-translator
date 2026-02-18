@@ -17,10 +17,11 @@ exports.handler = async (event) => {
     const since      = parseInt(event.queryStringParameters?.since      || '0');
     const sinceEdit  = parseInt(event.queryStringParameters?.sinceEdit  || '0');
 
-    const [transcriptRaw, stateRaw, editsRaw] = await redisPipeline(
+    const [transcriptRaw, stateRaw, editsRaw, typoRaw] = await redisPipeline(
       ['GET', 'sermon:transcript'],
       ['GET', 'sermon:state'],
-      ['GET', 'sermon:edits']
+      ['GET', 'sermon:edits'],
+      ['GET', 'sermon:typo']
     );
 
     const all     = transcriptRaw ? JSON.parse(transcriptRaw) : [];
@@ -32,10 +33,12 @@ exports.handler = async (event) => {
       .filter(([, edit]) => edit.id > sinceEdit)
       .map(([entryId, edit]) => ({ ...edit, entryId: parseInt(entryId) }));
 
+    const typo = typoRaw ? JSON.parse(typoRaw) : null;
+
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries, state, edits })
+      body: JSON.stringify({ entries, state, edits, typo })
     };
   } catch (err) {
     console.error('sync-pull error:', err);
