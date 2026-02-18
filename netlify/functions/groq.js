@@ -4,7 +4,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { audioBase64, mimeType, ext } = JSON.parse(event.body);
+    const { audioBase64, mimeType, ext, prompt } = JSON.parse(event.body);
 
     const audioBuffer = Buffer.from(audioBase64, 'base64');
     const boundary    = '----FormBoundary' + Math.random().toString(36).slice(2);
@@ -16,15 +16,28 @@ exports.handler = async (event) => {
       `Content-Type: ${mimeType || 'audio/webm'}\r\n\r\n`
     );
 
-    const fields = Buffer.from(
+    // Sanitize prompt: strip any \r or \n that would break multipart boundaries
+    const safePrompt = prompt
+      ? prompt.replace(/[\r\n]+/g, ' ').trim().slice(0, 400)
+      : '';
+
+    let fieldsStr =
       `\r\n--${boundary}\r\n` +
       `Content-Disposition: form-data; name="model"\r\n\r\nwhisper-large-v3` +
       `\r\n--${boundary}\r\n` +
       `Content-Disposition: form-data; name="language"\r\n\r\nko` +
       `\r\n--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="response_format"\r\n\r\ntext` +
-      `\r\n--${boundary}--\r\n`
-    );
+      `Content-Disposition: form-data; name="response_format"\r\n\r\ntext`;
+
+    if (safePrompt) {
+      fieldsStr +=
+        `\r\n--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="prompt"\r\n\r\n${safePrompt}`;
+    }
+
+    fieldsStr += `\r\n--${boundary}--\r\n`;
+
+    const fields = Buffer.from(fieldsStr);
 
     const body = Buffer.concat([partHeader, audioBuffer, fields]);
 
