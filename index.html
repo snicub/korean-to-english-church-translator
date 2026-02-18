@@ -539,12 +539,31 @@ function initRemote() {
   var bar = document.createElement('div');
   bar.id = 'remote-bar';
   bar.innerHTML =
+    // Row 1: session controls
     '<span id="remote-status" class="remote-status offline">\u25cb Connecting\u2026</span>' +
     '<button class="btn btn-start" id="remote-start" onclick="sendCommand(\'start\')">&#9654; Begin</button>' +
     '<button class="btn btn-stop"  id="remote-stop"  onclick="sendCommand(\'stop\')"  style="display:none">&#9632; Stop</button>' +
     '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
-    '<button class="btn btn-muted" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>';
+    '<button class="btn btn-muted" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
+    '<button class="btn btn-muted" onclick="document.getElementById(\'main\').scrollTop=9999999" title="Scroll to bottom">&#8615;</button>' +
+    // Row 2: display + segment controls
+    '<div style="width:100%;display:flex;align-items:center;gap:10px;padding-top:6px;flex-wrap:wrap">' +
+      '<span class="control-label">Segment</span>' +
+      '<select id="remote-chunk-ms" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:5px 8px;color:#fff;font-size:12px;cursor:pointer" onchange="sendCommand(\'setChunkMs\',this.value)">' +
+        '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
+      '</select>' +
+      '<span class="control-label" style="margin-left:8px">Size</span>' +
+      '<input type="range" class="slider" min="24" max="72" value="46" oninput="applyRemoteTypo(\'size\',this.value)" style="width:70px">' +
+      '<span class="control-label">Spacing</span>' +
+      '<input type="range" class="slider" min="12" max="36" value="20" oninput="applyRemoteTypo(\'spacing\',this.value)" style="width:70px">' +
+    '</div>';
   document.body.insertBefore(bar, document.body.firstChild);
+
+  // Dynamically keep main padding in sync with bar height
+  var ro = new ResizeObserver(function() {
+    document.getElementById('main').style.paddingTop = (bar.offsetHeight + 4) + 'px';
+  });
+  ro.observe(bar);
 
   // Start polling
   pollRemote();
