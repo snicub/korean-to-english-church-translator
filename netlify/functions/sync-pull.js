@@ -1,8 +1,8 @@
 const { getStore } = require('@netlify/blobs');
 
-exports.handler = async (event) => {
+exports.handler = async (event, context) => {
   try {
-    const store = getStore('sermon');
+    const store = getStore({ name: 'sermon', context });
     const since = parseInt(event.queryStringParameters?.since || '0');
 
     const [transcript, state] = await Promise.all([

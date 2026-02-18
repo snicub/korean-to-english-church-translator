@@ -1,12 +1,12 @@
 const { getStore } = require('@netlify/blobs');
 
-exports.handler = async (event) => {
+exports.handler = async (event, context) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   try {
-    const store = getStore('sermon');
+    const store = getStore({ name: 'sermon', context });
     const { type, data } = JSON.parse(event.body);
 
     if (type === 'entry') {
