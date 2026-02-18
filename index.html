@@ -22,7 +22,6 @@
     flex: 1;
     overflow-y: auto;
     padding: 60px 80px 100px;
-    scroll-behavior: smooth;
   }
   #main::-webkit-scrollbar { width: 0; }
 
@@ -254,6 +253,12 @@
       <input type="range" class="slider" id="line-height-slider" min="12" max="36" value="20" oninput="applyTypography()">
       <span class="slider-val" id="line-height-val">20px</span>
     </div>
+    <div class="control-group">
+      <span class="control-label">Scroll</span>
+      <input type="range" class="slider" id="scroll-speed-slider" min="40" max="500" value="150" oninput="updateScrollSpeed()">
+      <span class="slider-val" id="scroll-speed-val">150px/s</span>
+      <button class="btn btn-muted" id="btn-follow" onclick="resumeAutoScroll()" style="display:none;padding:4px 10px;font-size:11px;margin-left:4px">&#8615; Follow</button>
+    </div>
   </div>
   <div id="log-panel">
     <div id="log-entries"></div>
@@ -263,13 +268,67 @@
 <div id="toast"></div>
 
 <script>
-// Reliable scroll — waits for paint so new content height is measured correctly
+// ════════════════════════════════════════════════════════════
+//  SCROLL — smart auto-follow + speed-controlled animation
+// ════════════════════════════════════════════════════════════
+var autoScroll  = true;   // follows new content only when true
+var scrollSpeed = 150;    // pixels per second
+var _scrollAnim = null;   // rAF id for current animation
+var _scrollLock = false;  // true while we're animating (block scroll events)
+
 function scrollToBottom() {
   if (document.activeElement && document.activeElement.isContentEditable) return;
+  if (!autoScroll) return;
   requestAnimationFrame(function() {
     var main = document.getElementById('main');
-    main.scrollTop = main.scrollHeight;
+    var target = main.scrollHeight - main.clientHeight;
+    var dist   = target - main.scrollTop;
+    if (dist <= 2) return;
+
+    if (_scrollAnim) { cancelAnimationFrame(_scrollAnim); _scrollAnim = null; }
+
+    var dur   = Math.min((dist / scrollSpeed) * 1000, 2500);
+    var start = main.scrollTop;
+    var t0    = null;
+    _scrollLock = true;
+
+    function step(ts) {
+      if (!t0) t0 = ts;
+      var p = Math.min((ts - t0) / dur, 1);
+      var e = 1 - (1 - p) * (1 - p);  // easeOutQuad
+      main.scrollTop = start + (main.scrollHeight - main.clientHeight - start) * e;
+      if (p < 1 && autoScroll) {
+        _scrollAnim = requestAnimationFrame(step);
+      } else {
+        _scrollLock = false;
+        _scrollAnim = null;
+      }
+    }
+    _scrollAnim = requestAnimationFrame(step);
   });
+}
+
+// Re-enable auto-scroll and snap to bottom (user action)
+function resumeAutoScroll() {
+  autoScroll = true;
+  updateFollowBtn();
+  _scrollLock = true;
+  var main = document.getElementById('main');
+  main.scrollTop = main.scrollHeight;
+  requestAnimationFrame(function() { _scrollLock = false; });
+}
+
+function updateFollowBtn() {
+  var btn  = document.getElementById('btn-follow');
+  if (btn)  btn.style.display  = autoScroll ? 'none' : 'inline-block';
+  var rbtn = document.getElementById('remote-follow');
+  if (rbtn) rbtn.style.display = autoScroll ? 'none' : 'inline-block';
+}
+
+function updateScrollSpeed() {
+  scrollSpeed = parseInt(document.getElementById('scroll-speed-slider').value);
+  var lbl = document.getElementById('scroll-speed-val');
+  if (lbl) lbl.textContent = scrollSpeed + 'px/s';
 }
 
 // ════════════════════════════════════════════════════════════
@@ -545,7 +604,7 @@ function initRemote() {
     '<button class="btn btn-stop"  id="remote-stop"  onclick="sendCommand(\'stop\')"  style="display:none">&#9632; Stop</button>' +
     '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
     '<button class="btn btn-muted" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
-    '<button class="btn btn-muted" onclick="document.getElementById(\'main\').scrollTop=9999999" title="Scroll to bottom">&#8615;</button>' +
+    '<button class="btn btn-muted" id="remote-follow" onclick="resumeAutoScroll()" title="Scroll to bottom &amp; resume following">&#8615; Follow</button>' +
     // Row 2: display + segment controls
     '<div style="width:100%;display:flex;align-items:center;gap:10px;padding-top:6px;flex-wrap:wrap">' +
       '<span class="control-label">Segment</span>' +
@@ -1146,10 +1205,6 @@ function applyTypography() {
   // Apply to all existing and future sentences via CSS vars
   document.documentElement.style.setProperty('--sentence-size',    fontSize + 'px');
   document.documentElement.style.setProperty('--sentence-spacing',  lineHeight + 'px');
-
-  // Scroll to bottom after resize so latest text stays visible
-  var main = document.getElementById('main');
-  main.scrollTop = main.scrollHeight;
 }
 
 // Init CSS vars on load; block Enter inside editable sentences
@@ -1157,6 +1212,34 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('transcript').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') e.preventDefault();
   });
+
+  // Smart scroll detection — disable auto-follow when user scrolls up
+  (function() {
+    var main = document.getElementById('main');
+    var _sct = null;
+
+    // Cancel any running scroll animation (user grabbed the scroll)
+    function cancelScrollAnim() {
+      if (_scrollAnim) { cancelAnimationFrame(_scrollAnim); _scrollAnim = null; }
+      _scrollLock = false;
+    }
+
+    main.addEventListener('scroll', function() {
+      if (_scrollLock) return;  // our own animation — ignore
+      clearTimeout(_sct);
+      _sct = setTimeout(function() {
+        var atBot = main.scrollHeight - main.scrollTop - main.clientHeight < 80;
+        if (autoScroll !== atBot) {
+          autoScroll = atBot;
+          updateFollowBtn();
+        }
+      }, 120);
+    });
+
+    // User intentionally scrolling — cancel animation immediately
+    main.addEventListener('wheel',      cancelScrollAnim, { passive: true });
+    main.addEventListener('touchstart', cancelScrollAnim, { passive: true });
+  })();
 
   if (isRemote) {
     initRemote();
