@@ -415,13 +415,17 @@ var _typoTimer = null;
 function pushTypoSync() {
   clearTimeout(_typoTimer);
   _typoTimer = setTimeout(function() {
-    var fontSize   = parseInt(document.documentElement.style.getPropertyValue('--sentence-size'))   || 46;
-    var lineHeight = parseInt(document.documentElement.style.getPropertyValue('--sentence-spacing')) || 20;
+    // Read from slider DOM elements — more reliable than CSS getPropertyValue
+    // (custom property serialization can vary across browsers)
+    var fsEl = document.getElementById('font-size-slider') || document.getElementById('remote-font-slider');
+    var lhEl = document.getElementById('line-height-slider') || document.getElementById('remote-spacing-slider');
+    var fontSize   = fsEl ? parseInt(fsEl.value)   : 46;
+    var lineHeight = lhEl ? parseInt(lhEl.value)   : 20;
     fetch('/api/sync-push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'typo', data: { fontSize: fontSize, lineHeight: lineHeight, scrollSpeed: scrollSpeed } })
-    }).catch(function() {});
+    }).catch(function(e) { console.warn('[typo sync]', e); });
   }, 300);
 }
 
