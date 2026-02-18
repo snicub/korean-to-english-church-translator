@@ -21,7 +21,7 @@ async function redisPipeline(...cmds) {
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
-  if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'UPSTASH_URL / UPSTASH_TOKEN not set' }) };
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'Upstash not configured' }) };
 
   try {
     const { type, data } = JSON.parse(event.body);
@@ -36,10 +36,18 @@ exports.handler = async (event) => {
     } else if (type === 'state') {
       await redis('SET', 'sermon:state', JSON.stringify(data));
 
+    } else if (type === 'editEntry') {
+      // Store latest edit per entryId (object keyed by entryId)
+      const raw = await redis('GET', 'sermon:edits');
+      const edits = raw ? JSON.parse(raw) : {};
+      edits[String(data.entryId)] = { id: data.id, sentences: data.sentences };
+      await redis('SET', 'sermon:edits', JSON.stringify(edits));
+
     } else if (type === 'clear') {
       await redisPipeline(
         ['SET', 'sermon:transcript', '[]'],
-        ['SET', 'sermon:state', JSON.stringify({ isListening: false, chunkMs: data.chunkMs })]
+        ['SET', 'sermon:state', JSON.stringify({ isListening: false, chunkMs: data.chunkMs, clearedAt: data.clearedAt || Date.now() })],
+        ['DEL', 'sermon:edits']
       );
     }
 

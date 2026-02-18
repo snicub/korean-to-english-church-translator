@@ -11,12 +11,12 @@ async function redis(...cmd) {
 }
 
 exports.handler = async (event) => {
-  if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'UPSTASH_URL / UPSTASH_TOKEN not set' }) };
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'Upstash not configured' }) };
 
   try {
     if (event.httpMethod === 'POST') {
-      const { command, id } = JSON.parse(event.body);
-      await redis('SET', 'sermon:command', JSON.stringify({ command, id: id || Date.now() }));
+      const { command, id, value } = JSON.parse(event.body);
+      await redis('SET', 'sermon:command', JSON.stringify({ command, id: id || Date.now(), value }));
       return { statusCode: 200, body: 'ok' };
     }
 

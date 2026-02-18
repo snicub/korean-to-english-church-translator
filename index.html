@@ -365,32 +365,54 @@ var lastCommandId = 0;
 async function pollCommands() {
   if (isRemote) return;
   try {
-    var resp = await fetch('/api/sync-command');
-    if (!resp.ok) return;
-    var cmd = await resp.json();
-    if (cmd.command && cmd.id && cmd.id !== lastCommandId) {
-      lastCommandId = cmd.id;
-      if      (cmd.command === 'start' && !isListening) startSession();
-      else if (cmd.command === 'stop'  &&  isListening) stopSession();
-      else if (cmd.command === 'clear')                 clearAll();
+    // Check for commands from phone
+    var cmdResp = await fetch('/api/sync-command');
+    if (cmdResp.ok) {
+      var cmd = await cmdResp.json();
+      if (cmd.command && cmd.id && cmd.id !== lastCommandId) {
+        lastCommandId = cmd.id;
+        if      (cmd.command === 'start'      && !isListening) startSession();
+        else if (cmd.command === 'stop'       &&  isListening) stopSession();
+        else if (cmd.command === 'clear')                      clearAll();
+        else if (cmd.command === 'setChunkMs' && cmd.value) {
+          var sel = document.getElementById('chunk-ms');
+          if (sel) sel.value = cmd.value;
+        }
+      }
+    }
+    // Apply edits from phone to laptop DOM
+    var editResp = await fetch('/api/sync-pull?since=9999999999999&sinceEdit=' + lastEditId);
+    if (editResp.ok) {
+      var data = await editResp.json();
+      (data.edits || []).forEach(function(edit) {
+        if (edit.id > lastEditId) lastEditId = edit.id;
+        applyEdit(edit);
+      });
     }
   } catch (_) {}
 }
 
 // ── Remote (phone) side ──────────────────────────────────────
-var lastEntryId = 0;
+var lastEntryId  = 0;
+var lastEditId   = 0;
+var lastClearedAt = 0;
 
 async function pollRemote() {
   try {
-    var resp = await fetch('/api/sync-pull?since=' + lastEntryId);
+    var resp = await fetch('/api/sync-pull?since=' + lastEntryId + '&sinceEdit=' + lastEditId);
     if (!resp.ok) { setRemoteStatus('offline'); return; }
     var data = await resp.json();
 
     if (data.state) updateRemoteState(data.state);
 
-    data.entries.forEach(function(entry) {
+    (data.entries || []).forEach(function(entry) {
       if (entry.id > lastEntryId) lastEntryId = entry.id;
       renderRemoteEntry(entry);
+    });
+
+    (data.edits || []).forEach(function(edit) {
+      if (edit.id > lastEditId) lastEditId = edit.id;
+      applyEdit(edit);
     });
 
     setRemoteStatus((data.state && data.state.isListening) ? 'live' : 'ready');
@@ -413,16 +435,64 @@ function updateRemoteState(state) {
   btnStart.style.display = state.isListening ? 'none'         : 'inline-block';
   btnStop.style.display  = state.isListening ? 'inline-block' : 'none';
   document.getElementById('empty').style.display = state.isListening ? 'none' : '';
+
+  // Laptop called clearAll — wipe phone DOM too
+  if (state.clearedAt && state.clearedAt > lastClearedAt) {
+    lastClearedAt = state.clearedAt;
+    lastEntryId   = 0;
+    lastEditId    = 0;
+    document.getElementById('transcript').innerHTML = '';
+    document.getElementById('empty').style.display  = '';
+  }
 }
 
-async function sendCommand(command) {
+async function sendCommand(command, value) {
   try {
+    var payload = { command: command, id: Date.now() };
+    if (value !== undefined) payload.value = value;
     await fetch('/api/sync-command', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: command, id: Date.now() })
+      body: JSON.stringify(payload)
     });
   } catch (_) {}
+}
+
+// Push an edit from either device — no isRemote guard
+function pushEdit(entryId, sentences) {
+  fetch('/api/sync-push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'editEntry', data: { id: Date.now(), entryId: entryId, sentences: sentences } })
+  }).catch(function() {});
+}
+
+// Attach blur listeners to an entry's sentences so edits sync to the other device
+function addEditListeners(entryEl, entryId) {
+  entryEl.querySelectorAll('.sentence').forEach(function(span) {
+    span.addEventListener('blur', function() {
+      var texts = Array.from(entryEl.querySelectorAll('.sentence')).map(function(s) { return s.textContent.trim(); });
+      pushEdit(entryId, texts);
+    });
+  });
+}
+
+// Apply an incoming edit to the matching entry in the local DOM
+function applyEdit(edit) {
+  var entryEl = document.querySelector('[data-entry-id="' + edit.entryId + '"]');
+  if (!entryEl) return;
+  var spans = entryEl.querySelectorAll('.sentence');
+  (edit.sentences || []).forEach(function(text, i) {
+    if (spans[i] && document.activeElement !== spans[i]) {
+      spans[i].textContent = text;
+    }
+  });
+}
+
+// Phone-local typography (doesn't affect laptop display)
+function applyRemoteTypo(type, val) {
+  if (type === 'size')    document.documentElement.style.setProperty('--sentence-size',    val + 'px');
+  else                    document.documentElement.style.setProperty('--sentence-spacing', val + 'px');
 }
 
 function renderRemoteEntry(entry) {
@@ -437,6 +507,7 @@ function renderRemoteEntry(entry) {
   } else {
     var div = document.createElement('div');
     div.className = 'entry';
+    div.dataset.entryId = String(entry.id);
     var html = (entry.sentences || []).map(function(s) {
       return '<span class="sentence" contenteditable="true">' + esc(s) + '</span>';
     }).join('');
@@ -447,6 +518,7 @@ function renderRemoteEntry(entry) {
     }
     div.innerHTML = html;
     wrap.appendChild(div);
+    addEditListeners(div, entry.id);
   }
   scrollToBottom();
 }
@@ -580,8 +652,9 @@ function clearAll() {
   if (consoleWindow && !consoleWindow.closed) {
     consoleWindow.document.getElementById('log-entries').innerHTML = '';
   }
+  lastEditId = 0;
   syncPopupState();
-  pushSync('clear', { chunkMs: parseInt(document.getElementById('chunk-ms').value) });
+  pushSync('clear', { chunkMs: parseInt(document.getElementById('chunk-ms').value), clearedAt: Date.now() });
 }
 
 // ════════════════════════════════════════════════════════════
@@ -987,9 +1060,11 @@ function renderMusic(description) {
 }
 
 function renderEntry(result) {
+  var entryId = Date.now();
   var wrap  = document.getElementById('transcript');
   var entry = document.createElement('div');
   entry.className = 'entry';
+  entry.dataset.entryId = String(entryId);
 
   // Split english into individual sentences for easier reading
   var englishText = result.english || '';
@@ -1020,9 +1095,10 @@ function renderEntry(result) {
   entry.innerHTML = sentencesHTML + scriptureBlocks;
 
   wrap.appendChild(entry);
+  addEditListeners(entry, entryId);
   scrollToBottom();
   pushSync('entry', {
-    id:        Date.now(),
+    id:        entryId,
     type:      'entry',
     sentences: sentences.map(function(s) { return s.trim(); }),
     scripture: result.scripture || []
