@@ -796,7 +796,7 @@ async function processNext() {
         allSegments.push(seg);
 
         var sentences = result.english.match(/[^.!?]+[.!?]+/g) || [result.english];
-        lastEnglishTail = sentences.slice(-2).join(' ').trim();
+        lastEnglishTail = sentences.slice(-3).join(' ').trim();
 
         renderEntry(result);
 
@@ -884,7 +884,7 @@ function buildPrompt(korean) {
     p += '\n';
   }
   if (lastEnglishTail) {
-    p += 'PREVIOUS SEGMENT ENDED WITH:\n"' + lastEnglishTail + '"\n(New segment may continue mid-sentence.)\n\n';
+    p += 'PREVIOUS SEGMENT ENDED WITH:\n"' + lastEnglishTail + '"\nIf this new Korean segment completes that thought, begin your translation with the continuation (e.g. the rest of the clause or sentence) — do NOT repeat or re-introduce what was already said. If it ends mid-clause without punctuation, your translation should flow on from it naturally.\n\n';
   }
   p += 'NEW SEGMENT:\n' + korean;
   return p;
@@ -900,7 +900,8 @@ async function claudeTranslate(korean) {
     '4. Use context to maintain consistent terminology and complete sentences cut off mid-thought.\n' +
     '5. Remove all filler words (um, uh, and Korean equivalents: \uc74c, \uc5b4, \uadf8, \uc774\uc81c, \uadf8\ub83c\uc11c, etc.) and stutters.\n' +
     '6. Preserve theological terms: \ud558\ub098\ub2d8\u2192God | \uc608\uc218\ub2d8\u2192Jesus Christ | \uc131\ub839\u2192the Holy Spirit | \uc8fc\ub2d8\u2192the Lord | \ub9d0\uc3f4\u2192the Word | \uc740\ud61c\u2192grace | \uad6c\uc6d0\u2192salvation | \uc2ed\uc790\uac00\u2192the cross | \ubd80\ud65c\u2192the resurrection | \ubbf8\ub364\u2192faith | \uae30\ub3c4\u2192prayer\n' +
-    '7. Convert Korean Bible references: \uc694\ud55c\ubcf5\uc74c 3\uc7a5 16\uc808\u2192John 3:16 | \uc2dc\ud3b8 23\ud3b8\u2192Psalm 23\n\n' +
+    '7. Convert Korean Bible references: \uc694\ud55c\ubcf5\uc74c 3\uc7a5 16\uc808\u2192John 3:16 | \uc2dc\ud3b8 23\ud3b8\u2192Psalm 23\n' +
+    '8. Never begin the translation with a closing quotation mark or apostrophe. Audio is split into chunks mid-speech — if the previous chunk ended mid-quote, continue naturally without any opening quote marker.\n\n' +
     'Respond ONLY in valid JSON, no markdown:\n' +
     'For speech: {"english":"translated text","scripture":[{"ref":"John 3:16","note":""}]}\n' +
     'For music only: {"music":"description of what is playing"}';
@@ -1067,7 +1068,8 @@ function renderEntry(result) {
   entry.dataset.entryId = String(entryId);
 
   // Split english into individual sentences for easier reading
-  var englishText = result.english || '';
+  // Strip leading quote/apostrophe artifacts from chunk-boundary continuation
+  var englishText = (result.english || '').replace(/^[\s\u0027\u0022\u2018\u2019\u201C\u201D]+/, '');
   var rawSentences = englishText.match(/[^.!?]+[.!?]*/g) || [englishText];
   // Filter out empty strings
   var sentences = rawSentences.filter(function(s) { return s.trim().length > 0; });
