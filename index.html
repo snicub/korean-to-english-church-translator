@@ -163,13 +163,8 @@
   .log.info { color: #48f; }
 
   /* Remote control bar (phone view) */
-  #remote-bar {
-    position: fixed; top: 0; left: 0; right: 0;
-    background: #0a0a0a; border-bottom: 1px solid #1e1e1e;
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 20px; z-index: 200; flex-wrap: wrap;
-  }
-  .remote-status { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; margin-right: auto; }
+  /* Remote status indicator */
+  .remote-status { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; }
   .remote-status.live    { color: #3a3; }
   .remote-status.ready   { color: #555; }
   .remote-status.offline { color: #e55; }
@@ -255,8 +250,8 @@
     </div>
     <div class="control-group">
       <span class="control-label">Scroll</span>
-      <input type="range" class="slider" id="scroll-speed-slider" min="40" max="500" value="150" oninput="updateScrollSpeed()">
-      <span class="slider-val" id="scroll-speed-val">150px/s</span>
+      <input type="range" class="slider" id="scroll-speed-slider" min="40" max="500" value="100" oninput="updateScrollSpeed()">
+      <span class="slider-val" id="scroll-speed-val">100px/s</span>
       <button class="btn btn-muted" id="btn-follow" onclick="resumeAutoScroll()" style="display:none;padding:4px 10px;font-size:11px;margin-left:4px">&#8615; Follow</button>
     </div>
   </div>
@@ -272,7 +267,7 @@
 //  SCROLL — smart auto-follow + speed-controlled animation
 // ════════════════════════════════════════════════════════════
 var autoScroll  = true;   // follows new content only when true
-var scrollSpeed = 150;    // pixels per second
+var scrollSpeed = 100;    // pixels per second
 var _scrollAnim = null;   // rAF id for current animation
 var _scrollLock = false;  // true while we're animating (block scroll events)
 
@@ -280,14 +275,15 @@ function scrollToBottom() {
   if (document.activeElement && document.activeElement.isContentEditable) return;
   if (!autoScroll) return;
   requestAnimationFrame(function() {
-    var main = document.getElementById('main');
+    var main   = document.getElementById('main');
     var target = main.scrollHeight - main.clientHeight;
     var dist   = target - main.scrollTop;
     if (dist <= 2) return;
 
+    // Restart from current position so there's no jump even if interrupted
     if (_scrollAnim) { cancelAnimationFrame(_scrollAnim); _scrollAnim = null; }
 
-    var dur   = Math.min((dist / scrollSpeed) * 1000, 2500);
+    var dur   = Math.min(Math.max((dist / scrollSpeed) * 1000, 400), 2000);
     var start = main.scrollTop;
     var t0    = null;
     _scrollLock = true;
@@ -295,7 +291,9 @@ function scrollToBottom() {
     function step(ts) {
       if (!t0) t0 = ts;
       var p = Math.min((ts - t0) / dur, 1);
-      var e = 1 - (1 - p) * (1 - p);  // easeOutQuad
+      // easeInOutCubic — starts slow, smooth mid, decelerates at end
+      var e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+      // Recalculate target live so new content arriving mid-animation is captured
       main.scrollTop = start + (main.scrollHeight - main.clientHeight - start) * e;
       if (p < 1 && autoScroll) {
         _scrollAnim = requestAnimationFrame(step);
@@ -582,47 +580,96 @@ function renderRemoteEntry(entry) {
   scrollToBottom();
 }
 
+var remotePanelOpen = false;
+
+function toggleRemotePanel() {
+  remotePanelOpen = !remotePanelOpen;
+  var panel = document.getElementById('remote-panel');
+  var main  = document.getElementById('main');
+  if (!panel) return;
+  if (remotePanelOpen) {
+    panel.style.display = 'flex';
+    requestAnimationFrame(function() {
+      main.style.paddingTop = (panel.offsetHeight + 8) + 'px';
+    });
+  } else {
+    panel.style.display = 'none';
+    main.style.paddingTop = '0';
+  }
+}
+
+function updateRemoteScrollSpeed(val) {
+  scrollSpeed = parseInt(val);
+  var lbl = document.getElementById('remote-scroll-val');
+  if (lbl) lbl.textContent = scrollSpeed + 'px/s';
+  // keep main admin slider in sync if it exists
+  var mainSlider = document.getElementById('scroll-speed-slider');
+  if (mainSlider) { mainSlider.value = val; updateScrollSpeed(); }
+}
+
 function initRemote() {
   // Hide laptop-only chrome
   document.getElementById('console-btn').style.display    = 'none';
   document.getElementById('console-drawer').style.display = 'none';
 
-  // Shift content below the remote bar
-  document.getElementById('main').style.paddingTop = '56px';
-
-  // Set typography defaults (sliders don't exist in remote view)
+  // Full-height transcript (no top bar by default)
   document.documentElement.style.setProperty('--sentence-size',    '46px');
   document.documentElement.style.setProperty('--sentence-spacing', '20px');
 
-  // Inject remote control bar
-  var bar = document.createElement('div');
-  bar.id = 'remote-bar';
-  bar.innerHTML =
-    // Row 1: session controls
-    '<span id="remote-status" class="remote-status offline">\u25cb Connecting\u2026</span>' +
-    '<button class="btn btn-start" id="remote-start" onclick="sendCommand(\'start\')">&#9654; Begin</button>' +
-    '<button class="btn btn-stop"  id="remote-stop"  onclick="sendCommand(\'stop\')"  style="display:none">&#9632; Stop</button>' +
-    '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
-    '<button class="btn btn-muted" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
-    '<button class="btn btn-muted" id="remote-follow" onclick="resumeAutoScroll()" title="Scroll to bottom &amp; resume following">&#8615; Follow</button>' +
-    // Row 2: display + segment controls
-    '<div style="width:100%;display:flex;align-items:center;gap:10px;padding-top:6px;flex-wrap:wrap">' +
+  // Subtle gear toggle button — always visible, top-right
+  var togBtn = document.createElement('button');
+  togBtn.title = 'Admin Controls';
+  togBtn.innerHTML = '&#9881;';
+  togBtn.setAttribute('style',
+    'position:fixed;top:14px;right:16px;z-index:300;' +
+    'background:rgba(10,10,10,0.7);border:1px solid #222;border-radius:4px;' +
+    'color:#444;font-size:18px;cursor:pointer;padding:5px 8px;line-height:1;' +
+    'transition:color 0.2s;');
+  togBtn.addEventListener('mouseenter', function() { togBtn.style.color = '#aaa'; });
+  togBtn.addEventListener('mouseleave', function() { togBtn.style.color = '#444'; });
+  togBtn.addEventListener('click', toggleRemotePanel);
+  document.body.appendChild(togBtn);
+
+  // Collapsible control panel (hidden by default)
+  var panel = document.createElement('div');
+  panel.id = 'remote-panel';
+  panel.setAttribute('style',
+    'position:fixed;top:0;left:0;right:0;z-index:200;' +
+    'background:#0a0a0a;border-bottom:1px solid #1e1e1e;' +
+    'padding:14px 20px 16px;display:none;flex-direction:column;gap:12px;');
+  panel.innerHTML =
+    // Row 1: status + session controls
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<span id="remote-status" class="remote-status offline">&#9675; Connecting&#x2026;</span>' +
+      '<button class="btn btn-start" id="remote-start" onclick="sendCommand(\'start\')">&#9654; Begin</button>' +
+      '<button class="btn btn-stop"  id="remote-stop"  onclick="sendCommand(\'stop\')"  style="display:none">&#9632; Stop</button>' +
+      '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
+      '<button class="btn btn-muted" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
+      '<button class="btn btn-muted" id="remote-follow" onclick="resumeAutoScroll()" title="Scroll to bottom &amp; resume following">&#8615; Follow</button>' +
+    '</div>' +
+    // Row 2: display + scroll controls
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
       '<span class="control-label">Segment</span>' +
       '<select id="remote-chunk-ms" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:5px 8px;color:#fff;font-size:12px;cursor:pointer" onchange="sendCommand(\'setChunkMs\',this.value)">' +
         '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
       '</select>' +
-      '<span class="control-label" style="margin-left:8px">Size</span>' +
-      '<input type="range" class="slider" min="24" max="72" value="46" oninput="applyRemoteTypo(\'size\',this.value)" style="width:70px">' +
+      '<span class="control-label" style="margin-left:6px">Size</span>' +
+      '<input type="range" class="slider" min="24" max="72" value="46" oninput="applyRemoteTypo(\'size\',this.value)" style="width:80px">' +
       '<span class="control-label">Spacing</span>' +
-      '<input type="range" class="slider" min="12" max="36" value="20" oninput="applyRemoteTypo(\'spacing\',this.value)" style="width:70px">' +
+      '<input type="range" class="slider" min="12" max="36" value="20" oninput="applyRemoteTypo(\'spacing\',this.value)" style="width:80px">' +
+      '<span class="control-label">Scroll</span>' +
+      '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="100" oninput="updateRemoteScrollSpeed(this.value)" style="width:80px">' +
+      '<span class="slider-val" id="remote-scroll-val">100px/s</span>' +
     '</div>';
-  document.body.insertBefore(bar, document.body.firstChild);
+  document.body.appendChild(panel);
 
-  // Dynamically keep main padding in sync with bar height
+  // Keep main padding in sync with panel height when open
   var ro = new ResizeObserver(function() {
-    document.getElementById('main').style.paddingTop = (bar.offsetHeight + 4) + 'px';
+    if (remotePanelOpen) {
+      document.getElementById('main').style.paddingTop = (panel.offsetHeight + 8) + 'px';
+    }
   });
-  ro.observe(bar);
+  ro.observe(panel);
 
   // Start polling
   pollRemote();
@@ -716,7 +763,6 @@ function stopSession() {
   log('Stopped.');
   syncPopupState();
   pushSync('state', { isListening: false, chunkMs: parseInt(document.getElementById('chunk-ms').value) });
-  downloadTranscript('Stopped manually');
 }
 
 function clearAll() {
