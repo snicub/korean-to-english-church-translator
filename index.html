@@ -28,7 +28,7 @@
       #main {
         flex: 1;
         overflow-y: auto;
-        padding: 60px 80px 7.5vh;
+        padding: 60px 80px 6.5vh;
         will-change: scroll-position;
         -webkit-overflow-scrolling: touch;
       }
@@ -569,7 +569,8 @@
             value="60"
             oninput="
               applyTypographyLocal(null, null, this.value);
-              document.getElementById('chunk-spacing-slider').value = this.value;
+              document.getElementById('chunk-spacing-slider').value =
+                this.value;
             "
             onchange="applyTypography()"
           />
@@ -807,9 +808,10 @@
       function showAuthGate() {
         var overlay = document.createElement("div");
         overlay.id = "auth-overlay";
-        overlay.setAttribute("style",
+        overlay.setAttribute(
+          "style",
           "position:fixed;inset:0;z-index:9999;background:#000;" +
-          "display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;"
+            "display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;",
         );
         overlay.innerHTML =
           '<div style="color:#888;font-size:14px;letter-spacing:1px;margin-bottom:8px">THE LORD\'S CHURCH</div>' +
@@ -833,13 +835,15 @@
                 overlay.remove();
               } else {
                 adminKey = "";
-                document.getElementById("auth-error").textContent = "Invalid key";
+                document.getElementById("auth-error").textContent =
+                  "Invalid key";
                 input.value = "";
                 input.focus();
               }
             })
             .catch(function () {
-              document.getElementById("auth-error").textContent = "Connection error";
+              document.getElementById("auth-error").textContent =
+                "Connection error";
             });
         });
       }
@@ -881,7 +885,9 @@
         sermonTitle = title || "";
         var displayEl = document.getElementById("sermon-title-display");
         if (displayEl) {
-          displayEl.textContent = sermonTitle ? "Sermon Title: " + sermonTitle : "";
+          displayEl.textContent = sermonTitle
+            ? "Sermon Title: " + sermonTitle
+            : "";
           displayEl.style.display = sermonTitle ? "block" : "none";
         }
         if (sermonTitle) {
@@ -1963,6 +1969,7 @@
 
       var SONNET_MODEL = "claude-sonnet-4-20250514";
       var HAIKU_MODEL = "claude-haiku-4-5-20251001";
+      var SONNET_45_MODEL = "claude-sonnet-4-5-20250929";
       var _sonnetDown = false;
 
       async function claudeTranslate(korean) {
@@ -1988,7 +1995,9 @@
         // Single fetch to Claude with a given model
         async function tryModel(model) {
           var controller = new AbortController();
-          var timer = setTimeout(function () { controller.abort(); }, 30000);
+          var timer = setTimeout(function () {
+            controller.abort();
+          }, 30000);
           var resp;
           try {
             resp = await fetch("/api/claude", {
@@ -2013,7 +2022,8 @@
             try {
               var j = await resp.json();
               msg = j.error?.message || msg;
-              if (msg.toLowerCase().indexOf("overloaded") !== -1) isOverloaded = true;
+              if (msg.toLowerCase().indexOf("overloaded") !== -1)
+                isOverloaded = true;
             } catch (_) {}
             var err = new Error("Claude: " + msg);
             err.overloaded = isOverloaded;
@@ -2022,7 +2032,9 @@
 
           var data = await resp.json();
           var raw = data.content
-            .map(function (b) { return b.text || ""; })
+            .map(function (b) {
+              return b.text || "";
+            })
             .join("")
             .trim();
           try {
@@ -2041,30 +2053,34 @@
             var result = await tryModel(SONNET_MODEL);
             if (_sonnetDown) {
               _sonnetDown = false;
-              log("Sonnet is back \u2014 resuming primary model.", "info");
+              log("Sonnet 4.6 is back \u2014 resuming primary model.", "info");
             }
             return result;
           } catch (e) {
             lastErr = e;
             if (attempt < 3) {
               log("Retry " + attempt + "...", "warn");
-              await new Promise(function (r) { setTimeout(r, 1500 * attempt); });
+              await new Promise(function (r) {
+                setTimeout(r, 1500 * attempt);
+              });
             }
           }
         }
 
-        // Sonnet failed 3 times — fall back to Haiku
+        // Sonnet failed 3 times — fall back to sonnet 45
         _sonnetDown = true;
-        log("Sonnet overloaded \u2014 falling back to Haiku.", "warn");
+        log("Sonnet overloaded \u2014 falling back to Sonnet 4.5.", "warn");
 
         for (var hAttempt = 1; hAttempt <= 2; hAttempt++) {
           try {
-            return await tryModel(HAIKU_MODEL);
+            return await tryModel(SONNET_45_MODEL);
           } catch (e) {
             lastErr = e;
             if (hAttempt < 2) {
-              log("Haiku retry...", "warn");
-              await new Promise(function (r) { setTimeout(r, 1500); });
+              log("Sonnet 4.5...", "warn");
+              await new Promise(function (r) {
+                setTimeout(r, 1500);
+              });
             }
           }
         }
