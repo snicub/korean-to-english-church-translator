@@ -262,6 +262,8 @@
         flex: 1;
         overflow-y: auto;
         padding: 10px 20px;
+        -ms-overflow-style: none; /* Internet Explorer and Edge */
+        scrollbar-width: none; /* Firefox */
       }
       #log-panel::-webkit-scrollbar {
         width: 2px;
@@ -657,31 +659,65 @@
           var dist = target - main.scrollTop;
           if (dist <= 2) return;
 
-          // Restart from current position so there's no jump even if interrupted
+          // Cancel any running scroll animation so we can restart cleanly
           if (_scrollAnim) {
-            cancelAnimationFrame(_scrollAnim);
+            clearTimeout(_scrollAnim);
             _scrollAnim = null;
-          }
-
-          // Linear scroll at constant readable speed — no duration cap,
-          // so new content scrolls by at a pace older readers can follow.
-          var dur = Math.max((dist / scrollSpeed) * 1000, 400);
-          var start = main.scrollTop;
-          var t0 = null;
-          _scrollLock = true;
-
-          function step(ts) {
-            if (!t0) t0 = ts;
-            var p = Math.min((ts - t0) / dur, 1);
-            main.scrollTop = start + (target - start) * p;
-            if (p < 1 && autoScroll) {
-              _scrollAnim = requestAnimationFrame(step);
-            } else {
-              _scrollLock = false;
-              _scrollAnim = null;
+            var content0 = document.getElementById("transcript");
+            // Grab current visual position before clearing the transform
+            var curTransform = getComputedStyle(content0).transform;
+            content0.style.transition = "";
+            content0.style.transform = "";
+            content0.style.willChange = "";
+            // If there was an active transform, adjust scrollTop to match visual pos
+            if (curTransform && curTransform !== "none") {
+              // matrix(1, 0, 0, 1, 0, ty) — ty is the last value
+              var parts = curTransform.match(/matrix.*\((.+)\)/);
+              if (parts) {
+                var ty = parseFloat(parts[1].split(",").pop());
+                if (ty) main.scrollTop = main.scrollTop + ty;
+              }
             }
           }
-          _scrollAnim = requestAnimationFrame(step);
+
+          // GPU-accelerated smooth scroll using CSS transform.
+          // scrollTop is integer-only, so at slow speeds (100 px/s ≈ 1.67 px/frame)
+          // it alternates between 1px and 2px jumps — visible stutter.
+          // Instead: jump scrollTop to target instantly, then offset the content
+          // back with translateY and animate that to 0 via CSS transition.
+          // The GPU composites transforms at sub-pixel precision — butter smooth.
+          var content = document.getElementById("transcript");
+          _scrollLock = true;
+
+          // Snap scroll position to target (invisible — offset cancels it)
+          main.scrollTop = target;
+          // Offset content back to where it visually was
+          content.style.transition = "none";
+          content.style.transform = "translateY(" + dist + "px)";
+          content.style.willChange = "transform";
+
+          // Force style recalc so the browser registers the starting position
+          content.offsetHeight;
+
+          // Animate transform to 0 at the desired speed — linear, constant pace
+          var dur = Math.max((dist / scrollSpeed) * 1000, 400);
+          content.style.transition = "transform " + dur + "ms linear";
+          content.style.transform = "translateY(0)";
+
+          // Clean up when animation completes
+          function onDone() {
+            content.removeEventListener("transitionend", onDone);
+            clearTimeout(fallback);
+            content.style.transition = "";
+            content.style.transform = "";
+            content.style.willChange = "";
+            _scrollLock = false;
+            _scrollAnim = null;
+          }
+          content.addEventListener("transitionend", onDone);
+          // Fallback in case transitionend doesn't fire (e.g. 0-distance edge case)
+          var fallback = setTimeout(onDone, dur + 100);
+          _scrollAnim = fallback; // store so we can cancel on re-entry
         });
       }
 
@@ -1073,10 +1109,13 @@
 
           if (data.state) updateRemoteState(data.state);
 
+          var newEntries = false;
           (data.entries || []).forEach(function (entry) {
             if (entry.id > lastEntryId) lastEntryId = entry.id;
             renderRemoteEntry(entry);
+            newEntries = true;
           });
+          if (newEntries) scrollToBottom();
 
           (data.edits || []).forEach(function (edit) {
             if (edit.id > lastEditId) lastEditId = edit.id;
@@ -1226,7 +1265,6 @@
           wrap.appendChild(div);
           addEditListeners(div, entry.id);
         }
-        scrollToBottom();
       }
 
       var remotePanelOpen = false;
@@ -1442,8 +1480,11 @@
         return _cachedMime;
       }
 
+      var _stoppedAt = 0; // epoch when session was stopped — pipeline skips if started before this
+
       function stopSession() {
         isListening = false;
+        _stoppedAt = Date.now();
         clearTimeout(chunkTimer);
         if (mediaRecorder && mediaRecorder.state !== "inactive")
           mediaRecorder.stop();
@@ -1453,15 +1494,24 @@
           });
           micStream = null;
         }
+
+        // Flush pending queue so no more chunks enter the pipeline
+        queue = [];
+        updateQueueDepth();
+
         document.getElementById("btn-start").style.display = "inline-block";
         document.getElementById("btn-stop").style.display = "none";
         log("Stopped.");
         syncPopupState();
-        pushSync("state", {
-          isListening: false,
-          isMuted: isMuted,
-          chunkMs: parseInt(document.getElementById("chunk-ms").value),
-        });
+
+        // Wipe Redis after a short delay so any in-flight entry push lands first,
+        // then the clear wipes it. 2s covers the worst-case render+push latency.
+        setTimeout(function () {
+          pushSync("clear", {
+            chunkMs: parseInt(document.getElementById("chunk-ms").value),
+            clearedAt: Date.now(),
+          });
+        }, 2000);
       }
 
       function clearAll() {
@@ -1607,11 +1657,18 @@
         if (busy || !queue.length) return;
         busy = true;
         var blob = queue.shift();
+        var chunkStarted = Date.now(); // track when this chunk entered the pipeline
         updateQueueDepth();
 
         try {
+          // If session was stopped while we were queued, skip entirely
+          if (_stoppedAt > chunkStarted) { busy = false; return; }
+
           log("Groq transcribing...");
           var korean = await groqTranscribe(blob);
+
+          // If session was stopped during transcription, skip
+          if (_stoppedAt > chunkStarted) { busy = false; return; }
 
           if (!korean || korean.trim().length < 3) {
             log("No speech detected.", "warn");
@@ -1629,6 +1686,9 @@
             );
             log("Claude translating...");
             var result = await claudeTranslate(korean);
+
+            // If session was stopped during translation, skip render+push
+            if (_stoppedAt > chunkStarted) { busy = false; return; }
 
             if (result.music) {
               log("Music detected: " + result.music, "info");
@@ -2176,8 +2236,23 @@
           // Cancel any running scroll animation (user grabbed the scroll)
           function cancelScrollAnim() {
             if (_scrollAnim) {
-              cancelAnimationFrame(_scrollAnim);
+              clearTimeout(_scrollAnim);
               _scrollAnim = null;
+            }
+            var ct = document.getElementById("transcript");
+            if (ct) {
+              // Snap visual position to current transform state before clearing
+              var cs = getComputedStyle(ct).transform;
+              ct.style.transition = "";
+              ct.style.transform = "";
+              ct.style.willChange = "";
+              if (cs && cs !== "none") {
+                var m = cs.match(/matrix.*\((.+)\)/);
+                if (m) {
+                  var ty = parseFloat(m[1].split(",").pop());
+                  if (ty) main.scrollTop = main.scrollTop + ty;
+                }
+              }
             }
             _scrollLock = false;
           }
