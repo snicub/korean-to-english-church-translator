@@ -2,10 +2,14 @@
 // Forwards the request body as-is (model, messages, system, max_tokens, etc.)
 // so the frontend can switch between Sonnet (translation) and Haiku (summary).
 
+const { checkAuth } = require('./auth');
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
+  const authErr = checkAuth(event);
+  if (authErr) return authErr;
 
   try {
     const body = JSON.parse(event.body);

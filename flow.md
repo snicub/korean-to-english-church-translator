@@ -38,8 +38,8 @@ A second person can follow along and control the display from their **phone**, o
   ┌───────────────────────────────────────┐
   │         Display Screen (Laptop)        │
   │  Large white text on black background  │
-  │  Sermon title shown at top (if set)    │
-  │  Auto-scrolls as new text arrives      │
+  │  "Sermon Title: ..." shown at top       │
+  │  Teleprompter-style smooth auto-scroll │
   └────────┬──────────────────────────────┘
            │  Pushes each entry + session state + typography to cloud
            ▼
@@ -156,7 +156,7 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 - The full transcript (up to 500 entries)
 - Current session state (Live / Ready / Muted)
 - Sermon title
-- Typography settings (font size, spacing, scroll speed, segment length) — synced to all devices
+- Typography settings (font size, line spacing, chunk spacing, scroll speed, segment length) — synced to all devices
 - Any text edits made from either device
 - Latest remote command (start, stop, mute, unmute, clear, setChunkMs)
 
@@ -202,7 +202,7 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 **Laptop (main display)**
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  The Book of Philippians                                  │  ← sermon title (if set)
+│  Sermon Title: The Book of Philippians                     │  ← prefixed with "Sermon Title:"
 │                                                          │
 │   In the ancient city of Philippi, Rome had             │
 │   established a colony where retired soldiers            │
@@ -224,8 +224,8 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 │ ▶ Begin  ■ Stop  Mute  Clear  ↓ Download                    │
 │ Title: [Sermon title input_________]                         │
 │ Segment: [30s ▾]                                             │
-│ Size    ──●── [46]   Spacing ──●── [20]                     │
-│ Scroll  ──●── [100]  ↓ Follow                                │
+│ Size ──●── [46]  Line ──●── [20]  Chunk ──●── [60]          │
+│ Scroll  ──●── [70]   ↓ Follow                                │
 ├──────────────────────────────────────────────────────────────┤
 │ [13:42:01] Groq transcribing...                              │
 │ [13:42:04] KO: 하나님은 우리를 사랑하시고…                  │
@@ -242,11 +242,11 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 │ Clear  ↓ Download  ↓ Follow     │
 │ Title: [___________________]    │
 │ Segment: [30s ▾]                │
-│ Size ──●── [46]  Spacing──●──[20]│
-│ Scroll ──●── [100]              │
+│ Size──●──[46] Line──●──[20]     │
+│ Chunk──●──[60] Scroll──●──[70] │
 ├─────────────────────────────────┤
 │                                 │
-│  The Book of Philippians        │
+│  Sermon Title: The Book of      │
 │                                 │
 │   In the ancient city of        │
 │   Philippi, Rome had            │
@@ -268,6 +268,18 @@ Pressing **Mute** keeps the session running (the microphone stays open, the sess
 ## Editable Transcript
 
 Every sentence on screen is directly editable — click any line to place a cursor, type your correction, then click away. The correction syncs to all other connected devices within 1–3 seconds. Edited text is preserved when you download the transcript.
+
+---
+
+## Auto-Scroll (Teleprompter)
+
+The display uses a teleprompter-style auto-scroll that creeps down at a constant speed (configurable via the **Scroll** slider, default 70 px/s). Key behaviors:
+
+- **No jumping:** A single `requestAnimationFrame` loop moves at constant speed. When new text arrives, the loop just has more distance to cover — no cancel/restart, no flicker.
+- **Content fill threshold:** Scrolling doesn't begin until the transcript fills at least 65% of the viewport height. Short transcripts sit still.
+- **New entries fade in** with a 0.45s opacity animation (no vertical shift that would fight scroll positioning).
+- **User override:** Scrolling up with the mouse wheel or touch cancels auto-scroll. Scrolling back to the bottom re-enables it. The **Follow** button snaps to the bottom immediately.
+- **Two spacing controls:** "Line" adjusts the gap between sentences within a segment. "Chunk" adjusts the gap between translation segments.
 
 ---
 

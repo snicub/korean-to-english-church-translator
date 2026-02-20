@@ -795,6 +795,60 @@
       // ════════════════════════════════════════════════════════════
       //  STATE
       // ════════════════════════════════════════════════════════════
+      // ════════════════════════════════════════════════════════════
+      //  AUTH — one-time password per browser session
+      // ════════════════════════════════════════════════════════════
+      var adminKey = sessionStorage.getItem("adminKey") || "";
+
+      function authHeaders() {
+        return { "Content-Type": "application/json", "x-admin-key": adminKey };
+      }
+
+      function showAuthGate() {
+        var overlay = document.createElement("div");
+        overlay.id = "auth-overlay";
+        overlay.setAttribute("style",
+          "position:fixed;inset:0;z-index:9999;background:#000;" +
+          "display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;"
+        );
+        overlay.innerHTML =
+          '<div style="color:#888;font-size:14px;letter-spacing:1px;margin-bottom:8px">THE LORD\'S CHURCH</div>' +
+          '<input id="auth-input" type="password" placeholder="Enter admin key\u2026" autofocus ' +
+          'style="background:#111;border:1px solid #333;border-radius:6px;padding:12px 18px;' +
+          'color:#fff;font-size:16px;width:260px;text-align:center;outline:none">' +
+          '<div id="auth-error" style="color:#e55;font-size:13px;height:18px"></div>';
+        document.body.appendChild(overlay);
+
+        var input = document.getElementById("auth-input");
+        input.addEventListener("keydown", function (e) {
+          if (e.key !== "Enter") return;
+          var val = input.value.trim();
+          if (!val) return;
+          // Test the key against a lightweight endpoint
+          adminKey = val;
+          fetch("/api/sync-pull?since=0", { headers: { "x-admin-key": val } })
+            .then(function (r) {
+              if (r.ok) {
+                sessionStorage.setItem("adminKey", val);
+                overlay.remove();
+              } else {
+                adminKey = "";
+                document.getElementById("auth-error").textContent = "Invalid key";
+                input.value = "";
+                input.focus();
+              }
+            })
+            .catch(function () {
+              document.getElementById("auth-error").textContent = "Connection error";
+            });
+        });
+      }
+
+      // Gate everything behind auth — if no stored key, show prompt
+      if (!adminKey) {
+        document.addEventListener("DOMContentLoaded", showAuthGate);
+      }
+
       var isRemote = location.search.indexOf("remote") !== -1; // ?remote in URL = phone view
       var sermonTitle = "";
       var isMuted = false; // when true, audio chunks are discarded before Groq
@@ -865,7 +919,7 @@
         try {
           var resp = await fetch("/api/claude", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: authHeaders(),
             body: JSON.stringify({
               model: "claude-sonnet-4-20250514",
               max_tokens: 100,
@@ -994,7 +1048,7 @@
           var chunkSpacing = csEl ? parseInt(csEl.value) : 60;
           fetch("/api/sync-push", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: authHeaders(),
             body: JSON.stringify({
               type: "typo",
               data: {
@@ -1086,7 +1140,7 @@
         if (isRemote) return;
         fetch("/api/sync-push", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body: JSON.stringify({ type: type, data: data }),
         }).catch(function () {}); // fire-and-forget; never block main flow
       }
@@ -1099,6 +1153,7 @@
         try {
           var resp = await fetch(
             "/api/sync-pull?since=9999999999999&sinceEdit=" + lastEditId,
+            { headers: { "x-admin-key": adminKey } },
           );
           if (!resp.ok) return;
           var data = await resp.json();
@@ -1136,6 +1191,7 @@
         try {
           var resp = await fetch(
             "/api/sync-pull?since=" + lastEntryId + "&sinceEdit=" + lastEditId,
+            { headers: { "x-admin-key": adminKey } },
           );
           if (!resp.ok) {
             setRemoteStatus("offline");
@@ -1208,7 +1264,7 @@
           if (value !== undefined) payload.value = value;
           await fetch("/api/sync-command", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: authHeaders(),
             body: JSON.stringify(payload),
           });
         } catch (_) {}
@@ -1218,7 +1274,7 @@
       function pushEdit(entryId, sentences) {
         fetch("/api/sync-push", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body: JSON.stringify({
             type: "editEntry",
             data: { id: Date.now(), entryId: entryId, sentences: sentences },
@@ -1844,7 +1900,7 @@
             try {
               resp = await fetch("/api/groq", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: authHeaders(),
                 body: JSON.stringify({
                   audioBase64: audioBase64,
                   mimeType: baseMime,
@@ -1934,7 +1990,7 @@
             try {
               resp = await fetch("/api/claude", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: authHeaders(),
                 body: JSON.stringify({
                   model: "claude-sonnet-4-20250514",
                   max_tokens: 400,
@@ -2023,7 +2079,7 @@
           try {
             resp = await fetch("/api/claude", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: authHeaders(),
               body: JSON.stringify({
                 model: "claude-haiku-4-5-20251001",
                 max_tokens: 200,

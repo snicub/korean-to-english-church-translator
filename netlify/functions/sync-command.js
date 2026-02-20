@@ -14,8 +14,12 @@ async function redis(...cmd) {
   return (await resp.json()).result;
 }
 
+const { checkAuth } = require('./auth');
+
 exports.handler = async (event) => {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'Upstash not configured' }) };
+  const authErr = checkAuth(event);
+  if (authErr) return authErr;
 
   try {
     if (event.httpMethod === 'POST') {

@@ -15,8 +15,12 @@ async function redisPipeline(...cmds) {
   return (await resp.json()).map(r => r.result);
 }
 
+const { checkAuth } = require('./auth');
+
 exports.handler = async (event) => {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'Upstash not configured' }) };
+  const authErr = checkAuth(event);
+  if (authErr) return authErr;
 
   try {
     const since      = parseInt(event.queryStringParameters?.since      || '0');

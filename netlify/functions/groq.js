@@ -2,10 +2,14 @@
 // Builds a multipart/form-data body manually (no FormData in Netlify Functions).
 // Accepts an optional prompt (previous Korean text) for vocabulary priming.
 
+const { checkAuth } = require('./auth');
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
+  const authErr = checkAuth(event);
+  if (authErr) return authErr;
 
   try {
     const { audioBase64, mimeType, ext, prompt } = JSON.parse(event.body);

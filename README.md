@@ -58,7 +58,8 @@ Set `GROQ_KEY` and `ANTHROPIC_KEY` in **Netlify → Site settings → Environmen
 
 - **↗** — pop the console out to a second monitor, freeing the main screen for the sermon text
 - **Segment** — chunk duration (20s / 25s / 30s); longer = better accuracy, more latency
-- **Size / Spacing** — live typography controls for the display
+- **Size / Line / Chunk** — live typography controls: font size, sentence spacing, and segment gap
+- **Scroll** — auto-scroll speed (teleprompter-style smooth scrolling)
 - **Clear** — wipe transcript and start fresh
 - **↓ Download** — save transcript as `.txt` at any time
 
