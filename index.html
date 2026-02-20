@@ -1961,6 +1961,10 @@
         return p;
       }
 
+      var SONNET_MODEL = "claude-sonnet-4-20250514";
+      var HAIKU_MODEL = "claude-haiku-4-5-20251001";
+      var _sonnetDown = false;
+
       async function claudeTranslate(korean) {
         var system =
           "You are a Korean-to-English translation assistant for a live Christian church service displayed on screen.\n\n" +
@@ -1979,64 +1983,92 @@
           'For speech: {"english":"translated text","scripture":[{"ref":"John 3:16","note":""}]}\n' +
           'For music only: {"music":"description of what is playing"}';
 
+        var prompt = buildPrompt(korean);
+
+        // Single fetch to Claude with a given model
+        async function tryModel(model) {
+          var controller = new AbortController();
+          var timer = setTimeout(function () { controller.abort(); }, 30000);
+          var resp;
+          try {
+            resp = await fetch("/api/claude", {
+              method: "POST",
+              headers: authHeaders(),
+              body: JSON.stringify({
+                model: model,
+                max_tokens: 400,
+                temperature: 0,
+                system: system,
+                messages: [{ role: "user", content: prompt }],
+              }),
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+
+          if (!resp.ok) {
+            var msg = "Claude HTTP " + resp.status;
+            var isOverloaded = resp.status === 529 || resp.status === 504;
+            try {
+              var j = await resp.json();
+              msg = j.error?.message || msg;
+              if (msg.toLowerCase().indexOf("overloaded") !== -1) isOverloaded = true;
+            } catch (_) {}
+            var err = new Error("Claude: " + msg);
+            err.overloaded = isOverloaded;
+            throw err;
+          }
+
+          var data = await resp.json();
+          var raw = data.content
+            .map(function (b) { return b.text || ""; })
+            .join("")
+            .trim();
+          try {
+            return JSON.parse(
+              raw.replace(/^```json\n?|^```\n?|\n?```$/gm, "").trim(),
+            );
+          } catch (_) {
+            return { english: raw, scripture: [] };
+          }
+        }
+
+        // Always try Sonnet first — even if previously down, to detect recovery
         var lastErr;
         for (var attempt = 1; attempt <= 3; attempt++) {
           try {
-            var controller = new AbortController();
-            var timer = setTimeout(function () {
-              controller.abort();
-            }, 30000);
-            var resp;
-            try {
-              resp = await fetch("/api/claude", {
-                method: "POST",
-                headers: authHeaders(),
-                body: JSON.stringify({
-                  model: "claude-sonnet-4-20250514",
-                  max_tokens: 400,
-                  temperature: 0,
-                  system: system,
-                  messages: [{ role: "user", content: buildPrompt(korean) }],
-                }),
-                signal: controller.signal,
-              });
-            } finally {
-              clearTimeout(timer);
+            var result = await tryModel(SONNET_MODEL);
+            if (_sonnetDown) {
+              _sonnetDown = false;
+              log("Sonnet is back \u2014 resuming primary model.", "info");
             }
-
-            if (!resp.ok) {
-              var msg = "Claude HTTP " + resp.status;
-              try {
-                var j = await resp.json();
-                msg = j.error?.message || msg;
-              } catch (_) {}
-              throw new Error("Claude: " + msg);
-            }
-
-            var data = await resp.json();
-            var raw = data.content
-              .map(function (b) {
-                return b.text || "";
-              })
-              .join("")
-              .trim();
-            try {
-              return JSON.parse(
-                raw.replace(/^```json\n?|^```\n?|\n?```$/gm, "").trim(),
-              );
-            } catch (_) {
-              return { english: raw, scripture: [] };
-            }
+            return result;
           } catch (e) {
             lastErr = e;
             if (attempt < 3) {
               log("Retry " + attempt + "...", "warn");
-              await new Promise(function (r) {
-                setTimeout(r, 1500 * attempt);
-              });
+              await new Promise(function (r) { setTimeout(r, 1500 * attempt); });
             }
           }
         }
+
+        // Sonnet failed 3 times — fall back to Haiku
+        _sonnetDown = true;
+        log("Sonnet overloaded \u2014 falling back to Haiku.", "warn");
+
+        for (var hAttempt = 1; hAttempt <= 2; hAttempt++) {
+          try {
+            return await tryModel(HAIKU_MODEL);
+          } catch (e) {
+            lastErr = e;
+            if (hAttempt < 2) {
+              log("Haiku retry...", "warn");
+              await new Promise(function (r) { setTimeout(r, 1500); });
+            }
+          }
+        }
+
         throw lastErr;
       }
 
