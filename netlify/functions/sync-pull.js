@@ -1,3 +1,8 @@
+// sync-pull — single endpoint that returns ALL shared state from Redis.
+// Both the laptop (every 3 s) and phone (every 1.5 s) poll this one URL.
+// Returns: transcript entries, session state, edits, typography, and the
+// latest remote command — so the laptop needs only ONE fetch per poll cycle.
+
 const UPSTASH_URL   = process.env.UPSTASH_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_TOKEN;
 
@@ -17,11 +22,13 @@ exports.handler = async (event) => {
     const since      = parseInt(event.queryStringParameters?.since      || '0');
     const sinceEdit  = parseInt(event.queryStringParameters?.sinceEdit  || '0');
 
-    const [transcriptRaw, stateRaw, editsRaw, typoRaw] = await redisPipeline(
+    // Single pipeline: 5 keys in one Redis round-trip
+    const [transcriptRaw, stateRaw, editsRaw, typoRaw, commandRaw] = await redisPipeline(
       ['GET', 'sermon:transcript'],
       ['GET', 'sermon:state'],
       ['GET', 'sermon:edits'],
-      ['GET', 'sermon:typo']
+      ['GET', 'sermon:typo'],
+      ['GET', 'sermon:command']
     );
 
     const all     = transcriptRaw ? JSON.parse(transcriptRaw) : [];
@@ -33,12 +40,13 @@ exports.handler = async (event) => {
       .filter(([, edit]) => edit.id > sinceEdit)
       .map(([entryId, edit]) => ({ ...edit, entryId: parseInt(entryId) }));
 
-    const typo = typoRaw ? JSON.parse(typoRaw) : null;
+    const typo    = typoRaw    ? JSON.parse(typoRaw)    : null;
+    const command = commandRaw ? JSON.parse(commandRaw) : null;
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries, state, edits, typo })
+      body: JSON.stringify({ entries, state, edits, typo, command })
     };
   } catch (err) {
     console.error('sync-pull error:', err);

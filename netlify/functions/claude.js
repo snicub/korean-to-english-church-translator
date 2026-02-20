@@ -1,3 +1,7 @@
+// claude — thin proxy to the Anthropic Messages API.
+// Forwards the request body as-is (model, messages, system, max_tokens, etc.)
+// so the frontend can switch between Sonnet (translation) and Haiku (summary).
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };

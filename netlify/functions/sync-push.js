@@ -1,3 +1,10 @@
+// sync-push — writes to Redis. Handles 5 types:
+//   entry     → append a translated segment to the transcript (capped at 500)
+//   state     → update session state (isListening, isMuted, chunkMs)
+//   editEntry → store an inline text correction (keyed by entryId)
+//   typo      → update typography settings (fontSize, lineHeight, scrollSpeed, chunkMs, sermonTitle)
+//   clear     → wipe transcript + edits, reset state
+
 const UPSTASH_URL   = process.env.UPSTASH_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_TOKEN;
 

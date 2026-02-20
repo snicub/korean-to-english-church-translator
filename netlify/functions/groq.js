@@ -1,3 +1,7 @@
+// groq — sends base64 audio to Groq's Whisper Large v3 for Korean speech-to-text.
+// Builds a multipart/form-data body manually (no FormData in Netlify Functions).
+// Accepts an optional prompt (previous Korean text) for vocabulary priming.
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };

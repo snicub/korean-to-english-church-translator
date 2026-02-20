@@ -28,7 +28,22 @@
       #main {
         flex: 1;
         overflow-y: auto;
-        padding: 60px 80px 100px;
+        padding: 60px 80px 50vh;
+        will-change: scroll-position;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      /* Top-edge fade — fixed overlay so it never affects scroll compositing */
+      body::after {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 80px;
+        background: linear-gradient(to bottom, #000, transparent);
+        pointer-events: none;
+        z-index: 10;
       }
       #main::-webkit-scrollbar {
         width: 0;
@@ -49,7 +64,7 @@
       /* Each segment block */
       .entry {
         margin-bottom: 60px;
-        animation: up 0.4s ease forwards;
+        animation: up 0.2s ease forwards;
         opacity: 0;
         transform: translateY(8px);
       }
@@ -83,15 +98,14 @@
         border-radius: 2px;
       }
 
-      /* Scripture reference callout */
+      /* Scripture reference — inline, same size as sentences */
       .scripture-callout {
         display: block;
-        margin-top: 18px;
-        padding: 10px 20px;
-        border-left: 2px solid #2a2a2a;
-        font-size: 16px;
-        color: #555;
-        letter-spacing: 0.3px;
+        font-size: var(--sentence-size, 46px);
+        line-height: 1.5;
+        font-weight: 300;
+        color: #666;
+        margin-bottom: var(--sentence-spacing, 20px);
       }
 
       /* Music / instrument detected */
@@ -102,7 +116,7 @@
         letter-spacing: 3px;
         text-transform: uppercase;
         color: #666;
-        animation: up 0.4s ease forwards;
+        animation: up 0.2s ease forwards;
         opacity: 0;
       }
       .music-label::before {
@@ -345,17 +359,58 @@
       .slider::-webkit-slider-thumb:hover {
         background: #bbb;
       }
-      .slider-val {
-        font-size: 10px;
-        color: #555;
-        min-width: 28px;
-        text-align: right;
+      /* Firefox slider thumb */
+      .slider::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #888;
+        border: none;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .slider::-moz-range-thumb:hover {
+        background: #bbb;
+      }
+
+      input[type="number"],
+      input[type="text"] {
+        background: #111;
+        border: 1px solid #2a2a2a;
+        border-radius: 4px;
+        padding: 5px 8px;
+        color: #fff;
+        font-size: 12px;
+        outline: none;
+        font-family: "Inter", sans-serif;
+      }
+      input[type="number"] {
+        width: 56px;
+        -moz-appearance: textfield;
+      }
+      input[type="number"]::-webkit-inner-spin-button {
+        opacity: 0.4;
+      }
+      #sermon-title-input,
+      #remote-sermon-title-input {
+        width: 160px;
+      }
+
+      /* Sermon title — styled identically to transcript sentences */
+      #sermon-title-display {
+        display: none;
+        font-size: var(--sentence-size, 46px);
+        line-height: 1.5;
+        font-weight: 300;
+        color: #fff;
+        margin-bottom: var(--sentence-spacing, 20px);
       }
     </style>
   </head>
   <body>
     <div id="main">
       <div id="empty">Waiting for sermon&hellip;</div>
+      <div id="sermon-title-display"></div>
       <div id="transcript"></div>
     </div>
 
@@ -406,6 +461,9 @@
           >
             &#9632; Stop
           </button>
+          <button class="btn btn-muted" id="btn-mute" onclick="toggleMute()">
+            Mute
+          </button>
           <button class="btn btn-muted" onclick="clearAll()">Clear</button>
           <button
             class="btn btn-muted"
@@ -415,11 +473,20 @@
           </button>
         </div>
         <div class="control-group">
+          <span class="control-label">Title</span>
+          <input
+            type="text"
+            id="sermon-title-input"
+            placeholder="Sermon title&hellip;"
+            oninput="setSermonTitle(this.value)"
+          />
+        </div>
+        <div class="control-group">
           <span class="control-label">Segment</span>
-          <select id="chunk-ms">
-            <option value="20000">20s</option>
+          <select id="chunk-ms" onchange="pushTypoSync()">
+            <option value="20000" selected>20s</option>
             <option value="25000">25s</option>
-            <option value="30000" selected>30s</option>
+            <option value="30000">30s</option>
           </select>
         </div>
         <div class="control-group">
@@ -429,11 +496,26 @@
             class="slider"
             id="font-size-slider"
             min="24"
-            max="72"
+            max="175"
             value="46"
-            oninput="applyTypography()"
+            oninput="
+              applyTypographyLocal(this.value, null);
+              document.getElementById('font-size-input').value = this.value;
+            "
+            onchange="applyTypography()"
           />
-          <span class="slider-val" id="font-size-val">46px</span>
+          <input
+            type="number"
+            id="font-size-input"
+            min="24"
+            max="175"
+            value="46"
+            oninput="
+              applyTypographyLocal(this.value, null);
+              document.getElementById('font-size-slider').value = this.value;
+            "
+            onchange="applyTypography()"
+          />
         </div>
         <div class="control-group">
           <span class="control-label">Spacing</span>
@@ -442,11 +524,26 @@
             class="slider"
             id="line-height-slider"
             min="12"
-            max="36"
+            max="150"
             value="20"
-            oninput="applyTypography()"
+            oninput="
+              applyTypographyLocal(null, this.value);
+              document.getElementById('line-height-input').value = this.value;
+            "
+            onchange="applyTypography()"
           />
-          <span class="slider-val" id="line-height-val">20px</span>
+          <input
+            type="number"
+            id="line-height-input"
+            min="12"
+            max="150"
+            value="20"
+            oninput="
+              applyTypographyLocal(null, this.value);
+              document.getElementById('line-height-slider').value = this.value;
+            "
+            onchange="applyTypography()"
+          />
         </div>
         <div class="control-group">
           <span class="control-label">Scroll</span>
@@ -457,9 +554,26 @@
             min="40"
             max="500"
             value="100"
-            oninput="updateScrollSpeed()"
+            oninput="
+              scrollSpeed = parseInt(this.value);
+              _lastLocalTypoTime = Date.now();
+              document.getElementById('scroll-speed-input').value = this.value;
+            "
+            onchange="updateScrollSpeed()"
           />
-          <span class="slider-val" id="scroll-speed-val">100px/s</span>
+          <input
+            type="number"
+            id="scroll-speed-input"
+            min="40"
+            max="500"
+            value="100"
+            oninput="
+              scrollSpeed = parseInt(this.value);
+              _lastLocalTypoTime = Date.now();
+              document.getElementById('scroll-speed-slider').value = this.value;
+            "
+            onchange="updateScrollSpeed()"
+          />
           <button
             class="btn btn-muted"
             id="btn-follow"
@@ -483,13 +597,39 @@
     <div id="toast"></div>
 
     <script>
+      // ═══════════════════════════════════════════════════════════════
+      //  SERMON TRANSLATOR — Real-time Korean → English display
+      //
+      //  Architecture:
+      //    Laptop (main)           Cloud (Redis)            Phone (remote)
+      //    ─────────────           ─────────────            ──────────────
+      //    Mic → Groq Whisper      Stores transcript,       Polls every 1.5s
+      //    → Claude Sonnet         state, typography,       Shows transcript
+      //    → Render on screen      edits, commands          + admin controls
+      //    Pushes entries ───────► ◄─────────────── Sends commands
+      //    Polls every 3s ───────► ◄─────────────── Polls every 1.5s
+      //
+      //  Pipeline per 30s chunk:
+      //    Record audio → Groq Whisper (KO STT, ~3s) → Claude (KO→EN, ~5s) → Render
+      //
+      //  Key design:
+      //    - Chunks queued & processed one-at-a-time to preserve sermon order
+      //    - Grace period prevents polls from overwriting mid-drag slider values
+      //    - Bigram-frequency filter catches Whisper hallucinations on silence
+      //    - Incremental Haiku summary keeps Claude context bounded over long sermons
+      //    - Single sync-pull endpoint returns all state (entries, edits, typo, commands)
+      // ═══════════════════════════════════════════════════════════════
+
       // ════════════════════════════════════════════════════════════
-      //  SCROLL — smart auto-follow + speed-controlled animation
+      //  SCROLL — speed-controlled smooth auto-follow
+      //  Animates to bottom when new content arrives; pauses when user scrolls up.
       // ════════════════════════════════════════════════════════════
       var autoScroll = true; // follows new content only when true
       var scrollSpeed = 100; // pixels per second
       var _scrollAnim = null; // rAF id for current animation
       var _scrollLock = false; // true while we're animating (block scroll events)
+      var _scrollTarget = 0; // last scroll target (may be capped for large entries)
+      var _lastLocalTypoTime = 0; // grace period guard against poll overwriting local changes
 
       function scrollToBottom() {
         if (document.activeElement && document.activeElement.isContentEditable)
@@ -498,6 +638,22 @@
         requestAnimationFrame(function () {
           var main = document.getElementById("main");
           var target = main.scrollHeight - main.clientHeight;
+
+          // Cap target so the newest entry's top is always visible.
+          // At large font sizes a single entry can be taller than the viewport;
+          // scrolling to absolute bottom would push its start off-screen.
+          var lastEl = document.getElementById("transcript").lastElementChild;
+          if (lastEl) {
+            var entryTop = 0;
+            var el = lastEl;
+            while (el && el !== main) {
+              entryTop += el.offsetTop;
+              el = el.offsetParent;
+            }
+            target = Math.min(target, Math.max(entryTop - 80, 0));
+          }
+
+          _scrollTarget = target;
           var dist = target - main.scrollTop;
           if (dist <= 2) return;
 
@@ -507,7 +663,9 @@
             _scrollAnim = null;
           }
 
-          var dur = Math.min(Math.max((dist / scrollSpeed) * 1000, 400), 2000);
+          // Linear scroll at constant readable speed — no duration cap,
+          // so new content scrolls by at a pace older readers can follow.
+          var dur = Math.max((dist / scrollSpeed) * 1000, 400);
           var start = main.scrollTop;
           var t0 = null;
           _scrollLock = true;
@@ -515,11 +673,7 @@
           function step(ts) {
             if (!t0) t0 = ts;
             var p = Math.min((ts - t0) / dur, 1);
-            // easeInOutCubic — starts slow, smooth mid, decelerates at end
-            var e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-            // Recalculate target live so new content arriving mid-animation is captured
-            main.scrollTop =
-              start + (main.scrollHeight - main.clientHeight - start) * e;
+            main.scrollTop = start + (target - start) * p;
             if (p < 1 && autoScroll) {
               _scrollAnim = requestAnimationFrame(step);
             } else {
@@ -543,6 +697,36 @@
         });
       }
 
+      function toggleMute() {
+        isMuted = !isMuted;
+        updateMuteBtn();
+        log(
+          isMuted ? "Muted — audio will be discarded." : "Unmuted.",
+          isMuted ? "warn" : "info",
+        );
+        pushSync("state", {
+          isListening: isListening,
+          isMuted: isMuted,
+          chunkMs: parseInt(document.getElementById("chunk-ms").value),
+        });
+      }
+
+      function updateMuteBtn() {
+        var btn = document.getElementById("btn-mute");
+        if (btn) {
+          btn.textContent = isMuted ? "\u25a0 Unmute" : "Mute";
+          btn.style.color = isMuted ? "#e55" : "";
+          btn.style.borderColor = isMuted ? "#e55" : "";
+        }
+        // Remote mute button reflects current state
+        var rbtn = document.getElementById("remote-mute");
+        if (rbtn) {
+          rbtn.textContent = isMuted ? "\u25a0 Unmute" : "Mute";
+          rbtn.style.color = isMuted ? "#e55" : "";
+          rbtn.style.borderColor = isMuted ? "#e55" : "";
+        }
+      }
+
       function updateFollowBtn() {
         var btn = document.getElementById("btn-follow");
         if (btn) btn.style.display = autoScroll ? "none" : "inline-block";
@@ -552,36 +736,110 @@
 
       function updateScrollSpeed() {
         scrollSpeed = parseInt(
-          document.getElementById("scroll-speed-slider").value,
+          document.getElementById("scroll-speed-input").value,
         );
-        var lbl = document.getElementById("scroll-speed-val");
-        if (lbl) lbl.textContent = scrollSpeed + "px/s";
         pushTypoSync();
       }
 
       // ════════════════════════════════════════════════════════════
       //  STATE
       // ════════════════════════════════════════════════════════════
-      var isRemote = location.search.indexOf("remote") !== -1;
+      var isRemote = location.search.indexOf("remote") !== -1; // ?remote in URL = phone view
+      var sermonTitle = "";
+      var isMuted = false; // when true, audio chunks are discarded before Groq
 
       let mediaRecorder = null;
       let audioChunks = [];
-      let isListening = false;
+      let isListening = false; // session active (mic open)
       let micStream = null;
       let chunkTimer = null;
-      let queue = [];
-      let busy = false;
+      let queue = []; // audio blobs waiting to be processed (FIFO)
+      let busy = false; // true while a chunk is going through the pipeline
       let consoleOpen = false;
-      let logHistory = []; // last 100 entries, replayed into popup on open
-      let consoleWindow = null; // reference to detached popup
+      let logHistory = []; // last 100 log entries, replayed into popup on open
+      let consoleWindow = null; // reference to detached popup window
 
-      const WINDOW_SIZE = 8;
-      const SUMMARY_EVERY = 8;
-      let recentSegments = [];
-      let allSegments = [];
-      let sermonSummary = "";
+      const WINDOW_SIZE = 3; // recent segments sent as context to Claude (~60% fewer tokens than 8)
+      const SUMMARY_EVERY = 8; // Haiku summarises every N segments
+      let recentSegments = []; // sliding window of { korean, english }
+      let allSegments = []; // full sermon history (for summary generation)
+      let sermonSummary = ""; // rolling 3-sentence summary from Haiku
       let summarizing = false;
-      let lastEnglishTail = "";
+      let lastEnglishTail = ""; // tail of previous translation for continuity
+
+      // ════════════════════════════════════════════════════════════
+      //  SERMON TITLE
+      // ════════════════════════════════════════════════════════════
+
+      // Apply a title coming from sync (no push)
+      function applySermonTitle(title) {
+        sermonTitle = title || "";
+        var displayEl = document.getElementById("sermon-title-display");
+        if (displayEl) {
+          displayEl.textContent = sermonTitle;
+          displayEl.style.display = sermonTitle ? "block" : "none";
+        }
+        if (sermonTitle) {
+          document.getElementById("empty").style.display = "none";
+        }
+        // Sync inputs without re-triggering oninput
+        ["sermon-title-input", "remote-sermon-title-input"].forEach(
+          function (id) {
+            var el = document.getElementById(id);
+            if (el && el !== document.activeElement) el.value = sermonTitle;
+          },
+        );
+      }
+
+      // Called from user input — applies + pushes to Redis
+      // If Korean is detected, auto-translates after a short debounce.
+      var _titleTranslateTimer = null;
+      var _titleTranslateVersion = 0;
+
+      function setSermonTitle(title) {
+        applySermonTitle(title);
+        pushTypoSync();
+
+        // Auto-translate if Korean characters detected
+        if (/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(title)) {
+          clearTimeout(_titleTranslateTimer);
+          _titleTranslateTimer = setTimeout(function () {
+            translateTitle(title);
+          }, 600);
+        }
+      }
+
+      async function translateTitle(koreanTitle) {
+        var myVersion = ++_titleTranslateVersion;
+        try {
+          var resp = await fetch("/api/claude", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 100,
+              temperature: 0,
+              system:
+                "You are translating a Korean sermon title to English for a Christian church service at The Lord's Church in Iselin, New Jersey. Translate naturally and fluently. Return ONLY the English translation, nothing else.",
+              messages: [{ role: "user", content: koreanTitle }],
+            }),
+          });
+          if (!resp.ok || myVersion !== _titleTranslateVersion) return;
+          var data = await resp.json();
+          var english = data.content
+            .map(function (b) {
+              return b.text || "";
+            })
+            .join("")
+            .trim();
+          if (english && myVersion === _titleTranslateVersion) {
+            applySermonTitle(english);
+            pushTypoSync();
+          }
+        } catch (e) {
+          console.warn("[title translate]", e);
+        }
+      }
 
       // ════════════════════════════════════════════════════════════
       //  CONSOLE
@@ -644,25 +902,39 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  SYNC  (laptop → Netlify Blobs ← phone)
+      //  SYNC — bidirectional state sync via Upstash Redis
+      //  Laptop pushes entries/state; phone pushes commands/edits.
+      //  Both poll sync-pull for typography, edits, and commands.
+      //  Typography uses a 1.5s grace period to prevent polls from
+      //  overwriting in-progress slider drags.
       // ════════════════════════════════════════════════════════════
 
       // ── Typography sync (all devices) ────────────────────────────
-      // Debounced so slider dragging doesn't spam Redis
+      // Small debounce so rapid onchange bursts don't spam Redis
       var _typoTimer = null;
       function pushTypoSync() {
+        _lastLocalTypoTime = Date.now();
         clearTimeout(_typoTimer);
         _typoTimer = setTimeout(function () {
-          // Read from slider DOM elements — more reliable than CSS getPropertyValue
-          // (custom property serialization can vary across browsers)
-          var fsEl =
-            document.getElementById("font-size-slider") ||
-            document.getElementById("remote-font-slider");
-          var lhEl =
-            document.getElementById("line-height-slider") ||
-            document.getElementById("remote-spacing-slider");
+          // Read from the ACTIVE slider for this page mode.
+          // On remote, the main sliders exist but are hidden (display:none)
+          // and retain stale default values — so we must prefer remote sliders.
+          var fsEl = isRemote
+            ? document.getElementById("remote-font-slider") ||
+              document.getElementById("font-size-slider")
+            : document.getElementById("font-size-slider") ||
+              document.getElementById("remote-font-slider");
+          var lhEl = isRemote
+            ? document.getElementById("remote-spacing-slider") ||
+              document.getElementById("line-height-slider")
+            : document.getElementById("line-height-slider") ||
+              document.getElementById("remote-spacing-slider");
           var fontSize = fsEl ? parseInt(fsEl.value) : 46;
           var lineHeight = lhEl ? parseInt(lhEl.value) : 20;
+          var chunkEl =
+            document.getElementById("chunk-ms") ||
+            document.getElementById("remote-chunk-ms");
+          var chunkMs = chunkEl ? parseInt(chunkEl.value) : 30000;
           fetch("/api/sync-push", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -672,6 +944,8 @@
                 fontSize: fontSize,
                 lineHeight: lineHeight,
                 scrollSpeed: scrollSpeed,
+                chunkMs: chunkMs,
+                sermonTitle: sermonTitle,
               },
             }),
           }).catch(function (e) {
@@ -680,51 +954,58 @@
         }, 300);
       }
 
-      // Apply incoming typography to this device — updates CSS vars + all slider UIs
+      // Apply incoming typography to this device — updates CSS vars + all input UIs
       function applyTypoState(typo) {
         if (!typo) return;
+        // Skip if this device is actively editing (prevents poll overwriting a drag in progress)
+        if (Date.now() - _lastLocalTypoTime < 1500) return;
         if (typo.fontSize) {
           document.documentElement.style.setProperty(
             "--sentence-size",
             typo.fontSize + "px",
           );
-          var fs = document.getElementById("font-size-slider");
-          if (fs) {
-            fs.value = typo.fontSize;
-            document.getElementById("font-size-val").textContent =
-              typo.fontSize + "px";
-          }
-          var rfs = document.getElementById("remote-font-slider");
+          var fs = document.getElementById("font-size-input");
+          if (fs) fs.value = typo.fontSize;
+          var fss = document.getElementById("font-size-slider");
+          if (fss) fss.value = typo.fontSize;
+          var rfs = document.getElementById("remote-font-input");
           if (rfs) rfs.value = typo.fontSize;
+          var rfss = document.getElementById("remote-font-slider");
+          if (rfss) rfss.value = typo.fontSize;
         }
         if (typo.lineHeight) {
           document.documentElement.style.setProperty(
             "--sentence-spacing",
             typo.lineHeight + "px",
           );
-          var lh = document.getElementById("line-height-slider");
-          if (lh) {
-            lh.value = typo.lineHeight;
-            document.getElementById("line-height-val").textContent =
-              typo.lineHeight + "px";
-          }
-          var rlh = document.getElementById("remote-spacing-slider");
+          var lh = document.getElementById("line-height-input");
+          if (lh) lh.value = typo.lineHeight;
+          var lhs = document.getElementById("line-height-slider");
+          if (lhs) lhs.value = typo.lineHeight;
+          var rlh = document.getElementById("remote-spacing-input");
           if (rlh) rlh.value = typo.lineHeight;
+          var rlhs = document.getElementById("remote-spacing-slider");
+          if (rlhs) rlhs.value = typo.lineHeight;
         }
         if (typo.scrollSpeed) {
           scrollSpeed = typo.scrollSpeed;
-          var ss = document.getElementById("scroll-speed-slider");
-          if (ss) {
-            ss.value = typo.scrollSpeed;
-            document.getElementById("scroll-speed-val").textContent =
-              typo.scrollSpeed + "px/s";
-          }
-          var rss = document.getElementById("remote-scroll-slider");
-          if (rss) {
-            rss.value = typo.scrollSpeed;
-            document.getElementById("remote-scroll-val").textContent =
-              typo.scrollSpeed + "px/s";
-          }
+          var ss = document.getElementById("scroll-speed-input");
+          if (ss) ss.value = typo.scrollSpeed;
+          var sss = document.getElementById("scroll-speed-slider");
+          if (sss) sss.value = typo.scrollSpeed;
+          var rss = document.getElementById("remote-scroll-input");
+          if (rss) rss.value = typo.scrollSpeed;
+          var rsss = document.getElementById("remote-scroll-slider");
+          if (rsss) rsss.value = typo.scrollSpeed;
+        }
+        if (typo.chunkMs) {
+          var cm = document.getElementById("chunk-ms");
+          if (cm) cm.value = typo.chunkMs;
+          var rcm = document.getElementById("remote-chunk-ms");
+          if (rcm) rcm.value = typo.chunkMs;
+        }
+        if (typo.sermonTitle !== undefined) {
+          applySermonTitle(typo.sermonTitle);
         }
       }
 
@@ -738,37 +1019,39 @@
         }).catch(function () {}); // fire-and-forget; never block main flow
       }
 
-      var lastCommandId = 0;
+      // Laptop polls sync-pull for commands + edits + typography in ONE fetch.
+      // Uses since=9999999999999 to skip transcript entries (laptop already has them).
+      var lastCommandId = Date.now(); // ignore stale commands from before this page load
       async function pollCommands() {
         if (isRemote) return;
         try {
-          // Check for commands from phone
-          var cmdResp = await fetch("/api/sync-command");
-          if (cmdResp.ok) {
-            var cmd = await cmdResp.json();
-            if (cmd.command && cmd.id && cmd.id !== lastCommandId) {
-              lastCommandId = cmd.id;
-              if (cmd.command === "start" && !isListening) startSession();
-              else if (cmd.command === "stop" && isListening) stopSession();
-              else if (cmd.command === "clear") clearAll();
-              else if (cmd.command === "setChunkMs" && cmd.value) {
-                var sel = document.getElementById("chunk-ms");
-                if (sel) sel.value = cmd.value;
-              }
-            }
-          }
-          // Apply edits + typo from remote devices
-          var editResp = await fetch(
+          var resp = await fetch(
             "/api/sync-pull?since=9999999999999&sinceEdit=" + lastEditId,
           );
-          if (editResp.ok) {
-            var data = await editResp.json();
-            (data.edits || []).forEach(function (edit) {
-              if (edit.id > lastEditId) lastEditId = edit.id;
-              applyEdit(edit);
-            });
-            applyTypoState(data.typo);
+          if (!resp.ok) return;
+          var data = await resp.json();
+
+          // Process remote commands (start, stop, mute, clear, setChunkMs)
+          var cmd = data.command;
+          if (cmd && cmd.command && cmd.id && cmd.id > lastCommandId) {
+            lastCommandId = cmd.id;
+            if (cmd.command === "start" && !isListening) startSession();
+            else if (cmd.command === "stop" && isListening) stopSession();
+            else if (cmd.command === "clear") clearAll();
+            else if (cmd.command === "mute" && !isMuted) toggleMute();
+            else if (cmd.command === "unmute" && isMuted) toggleMute();
+            else if (cmd.command === "setChunkMs" && cmd.value) {
+              var sel = document.getElementById("chunk-ms");
+              if (sel) sel.value = cmd.value;
+            }
           }
+
+          // Apply remote edits and typography
+          (data.edits || []).forEach(function (edit) {
+            if (edit.id > lastEditId) lastEditId = edit.id;
+            applyEdit(edit);
+          });
+          applyTypoState(data.typo);
         } catch (_) {}
       }
 
@@ -827,9 +1110,12 @@
         if (!btnStart || !btnStop) return;
         btnStart.style.display = state.isListening ? "none" : "inline-block";
         btnStop.style.display = state.isListening ? "inline-block" : "none";
-        document.getElementById("empty").style.display = state.isListening
-          ? "none"
-          : "";
+        document.getElementById("empty").style.display =
+          state.isListening || sermonTitle ? "none" : "";
+        if (state.isMuted !== undefined) {
+          isMuted = state.isMuted;
+          updateMuteBtn();
+        }
 
         // Laptop called clearAll — wipe phone DOM too
         if (state.clearedAt && state.clearedAt > lastClearedAt) {
@@ -837,7 +1123,7 @@
           lastEntryId = 0;
           lastEditId = 0;
           document.getElementById("transcript").innerHTML = "";
-          document.getElementById("empty").style.display = "";
+          if (!sermonTitle) document.getElementById("empty").style.display = "";
         }
       }
 
@@ -893,22 +1179,13 @@
         });
       }
 
-      // Typography change — applies locally and syncs to all other devices
-      function applyRemoteTypo(type, val) {
-        if (type === "size")
-          document.documentElement.style.setProperty(
-            "--sentence-size",
-            val + "px",
-          );
-        else
-          document.documentElement.style.setProperty(
-            "--sentence-spacing",
-            val + "px",
-          );
-        pushTypoSync();
-      }
-
       function renderRemoteEntry(entry) {
+        // Skip if already rendered (prevents double-render on rapid back-to-back polls)
+        if (
+          entry.id &&
+          document.querySelector('[data-entry-id="' + entry.id + '"]')
+        )
+          return;
         document.getElementById("empty").style.display = "none";
         var wrap = document.getElementById("transcript");
 
@@ -937,10 +1214,10 @@
               })
               .map(function (sc) {
                 return (
-                  '<span class="scripture-callout">&#128214; ' +
+                  '<span class="scripture-callout">(' +
                   esc(sc.ref) +
                   (sc.note ? " \u2014 " + esc(sc.note) : "") +
-                  "</span>"
+                  ")</span>"
                 );
               })
               .join("");
@@ -972,15 +1249,6 @@
 
       function updateRemoteScrollSpeed(val) {
         scrollSpeed = parseInt(val);
-        var lbl = document.getElementById("remote-scroll-val");
-        if (lbl) lbl.textContent = scrollSpeed + "px/s";
-        // keep main admin slider in sync if it exists
-        var mainSlider = document.getElementById("scroll-speed-slider");
-        if (mainSlider) {
-          mainSlider.value = val;
-          document.getElementById("scroll-speed-val").textContent =
-            scrollSpeed + "px/s";
-        }
         pushTypoSync();
       }
 
@@ -1031,23 +1299,28 @@
           '<span id="remote-status" class="remote-status offline">&#9675; Connecting&#x2026;</span>' +
           '<button class="btn btn-start" id="remote-start" onclick="sendCommand(\'start\')">&#9654; Begin</button>' +
           '<button class="btn btn-stop"  id="remote-stop"  onclick="sendCommand(\'stop\')"  style="display:none">&#9632; Stop</button>' +
+          '<button class="btn btn-muted" id="remote-mute" onclick="sendCommand(isMuted?\'unmute\':\'mute\')">Mute</button>' +
           '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
           '<button class="btn btn-muted" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
           '<button class="btn btn-muted" id="remote-follow" onclick="resumeAutoScroll()" title="Scroll to bottom &amp; resume following">&#8615; Follow</button>' +
           "</div>" +
           // Row 2: display + scroll controls
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
-          '<span class="control-label">Segment</span>' +
-          '<select id="remote-chunk-ms" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:5px 8px;color:#fff;font-size:12px;cursor:pointer" onchange="sendCommand(\'setChunkMs\',this.value)">' +
+          '<span class="control-label">Title</span>' +
+          '<input type="text" id="remote-sermon-title-input" placeholder="Sermon title\u2026" oninput="setSermonTitle(this.value)">' +
+          '<span class="control-label" style="margin-left:6px">Segment</span>' +
+          '<select id="remote-chunk-ms" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:5px 8px;color:#fff;font-size:12px;cursor:pointer" onchange="sendCommand(\'setChunkMs\',this.value); pushTypoSync()">' +
           '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
           "</select>" +
           '<span class="control-label" style="margin-left:6px">Size</span>' +
-          '<input type="range" class="slider" id="remote-font-slider" min="24" max="72" value="46" oninput="applyRemoteTypo(\'size\',this.value)" style="width:80px">' +
+          '<input type="range" class="slider" id="remote-font-slider" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null);document.getElementById(\'remote-font-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-font-input" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null);document.getElementById(\'remote-font-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
           '<span class="control-label">Spacing</span>' +
-          '<input type="range" class="slider" id="remote-spacing-slider" min="12" max="36" value="20" oninput="applyRemoteTypo(\'spacing\',this.value)" style="width:80px">' +
+          '<input type="range" class="slider" id="remote-spacing-slider" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value);document.getElementById(\'remote-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-spacing-input" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value);document.getElementById(\'remote-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
           '<span class="control-label">Scroll</span>' +
-          '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="100" oninput="updateRemoteScrollSpeed(this.value)" style="width:80px">' +
-          '<span class="slider-val" id="remote-scroll-val">100px/s</span>' +
+          '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="100" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-input\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:70px">' +
+          '<input type="number" id="remote-scroll-input" min="40" max="500" value="100" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-slider\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:56px">' +
           "</div>";
         document.body.appendChild(panel);
 
@@ -1066,7 +1339,8 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  RECORDING
+      //  RECORDING — mic capture in configurable chunks (20/25/30s)
+      //  Each chunk goes through: mute gate → size gate → queue → pipeline
       // ════════════════════════════════════════════════════════════
       async function startSession() {
         log("Requesting microphone...", "info");
@@ -1087,6 +1361,7 @@
         syncPopupState();
         pushSync("state", {
           isListening: true,
+          isMuted: isMuted,
           chunkMs: parseInt(document.getElementById("chunk-ms").value),
         });
         log(
@@ -1117,6 +1392,11 @@
         };
 
         mediaRecorder.onstop = function () {
+          if (isMuted) {
+            audioChunks = [];
+            if (isListening) recordChunk();
+            return;
+          }
           if (!audioChunks.length) {
             log("Empty chunk, skipping.", "warn");
             if (isListening) recordChunk();
@@ -1143,7 +1423,9 @@
         }, ms);
       }
 
+      var _cachedMime = null;
       function bestMime() {
+        if (_cachedMime !== null) return _cachedMime;
         var types = [
           "audio/webm;codecs=opus",
           "audio/webm",
@@ -1151,9 +1433,13 @@
           "audio/mp4",
         ];
         for (var i = 0; i < types.length; i++) {
-          if (MediaRecorder.isTypeSupported(types[i])) return types[i];
+          if (MediaRecorder.isTypeSupported(types[i])) {
+            _cachedMime = types[i];
+            return _cachedMime;
+          }
         }
-        return "";
+        _cachedMime = "";
+        return _cachedMime;
       }
 
       function stopSession() {
@@ -1173,6 +1459,7 @@
         syncPopupState();
         pushSync("state", {
           isListening: false,
+          isMuted: isMuted,
           chunkMs: parseInt(document.getElementById("chunk-ms").value),
         });
       }
@@ -1180,7 +1467,7 @@
       function clearAll() {
         document.getElementById("transcript").innerHTML = "";
         document.getElementById("log-entries").innerHTML = "";
-        document.getElementById("empty").style.display = "";
+        if (!sermonTitle) document.getElementById("empty").style.display = "";
         recentSegments = [];
         allSegments = [];
         sermonSummary = "";
@@ -1197,7 +1484,9 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  DETACHABLE CONSOLE
+      //  DETACHABLE CONSOLE — pop-out admin window via window.open()
+      //  Uses window.opener for direct cross-window function calls.
+      //  Replays last 100 log entries on open; auto-reattaches on close.
       // ════════════════════════════════════════════════════════════
       function popOutConsole() {
         if (consoleWindow && !consoleWindow.closed) {
@@ -1308,7 +1597,10 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  PIPELINE
+      //  PIPELINE — sequential chunk processing
+      //  Groq Whisper (KO speech-to-text) → hallucination filter
+      //  → Claude Sonnet (KO→EN translation) → render + sync
+      //  Chunks are processed one-at-a-time in FIFO order.
       // ════════════════════════════════════════════════════════════
       async function processNext() {
         updateQueueDepth();
@@ -1323,6 +1615,11 @@
 
           if (!korean || korean.trim().length < 3) {
             log("No speech detected.", "warn");
+          } else if (isHallucination(korean)) {
+            log(
+              "Hallucination detected, skipping: " + korean.substring(0, 80),
+              "warn",
+            );
           } else {
             log(
               "KO: " +
@@ -1371,8 +1668,27 @@
         processNext();
       }
 
+      // Whisper hallucinations repeat the same phrase many times (5+ occurrences).
+      // Count every consecutive word-pair; flag if any bigram appears 3 or more times.
+      // Using a threshold of 3 prevents false positives on naturally repeated phrases
+      // like "the Lord" or "하나님이" which may legitimately appear twice in 30 s.
+      function isHallucination(text) {
+        var words = text.trim().split(/\s+/);
+        if (words.length < 6) return false;
+        var seen = {};
+        for (var i = 0; i < words.length - 1; i++) {
+          var bi = words[i] + "\x00" + words[i + 1];
+          seen[bi] = (seen[bi] || 0) + 1;
+          if (seen[bi] >= 5) return true;
+        }
+        return false;
+      }
+
       // ════════════════════════════════════════════════════════════
-      //  GROQ
+      //  GROQ — Whisper Large v3 speech-to-text
+      //  Sends base64 audio + previous Korean text as context prompt.
+      //  No fallback keywords on first segment (causes hallucinations).
+      //  Retries up to 3× with exponential backoff on failure.
       // ════════════════════════════════════════════════════════════
       async function groqTranscribe(blob) {
         var mimeMap = {
@@ -1398,12 +1714,15 @@
 
         // Seed Whisper with last known Korean text for domain vocabulary priming.
         // Falls back to core theological terms on the very first segment.
+        // Use the previous segment's Korean as the Whisper context prompt.
+        // No fallback keywords — sending domain terms to Whisper on silence
+        // causes it to hallucinate those exact words back.
         var whisperPrompt = recentSegments.length
           ? recentSegments[recentSegments.length - 1].korean
               .replace(/[\r\n]+/g, " ")
               .trim()
               .slice(0, 400)
-          : "하나님 예수님 성령 은혜 구원 말씀 믿음 기도 아멘 교회 성경";
+          : "";
 
         var lastErr;
         for (var attempt = 1; attempt <= 3; attempt++) {
@@ -1451,8 +1770,12 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  CLAUDE
+      //  CLAUDE — Sonnet translation (KO → EN)
+      //  Prompt includes: rolling sermon summary + last 3 translated
+      //  segments for terminology consistency + tail of previous segment
+      //  for cross-chunk sentence continuation. Retries 3× on failure.
       // ════════════════════════════════════════════════════════════
+      // Assemble user prompt: summary (theme) + recent segments (terminology) + tail (continuity) + new Korean
       function buildPrompt(korean) {
         var p = "";
         if (sermonSummary) p += "SERMON SUMMARY:\n" + sermonSummary + "\n\n";
@@ -1476,9 +1799,9 @@
       async function claudeTranslate(korean) {
         var system =
           "You are a Korean-to-English translation assistant for a live Christian church service displayed on screen.\n\n" +
-          "The microphone may pick up not just the pastor speaking, but also musical instruments (piano, guitar, organ, drums, etc.), congregational singing, or ambient sounds.\n\n" +
+          "The microphone may pick up not just the pastor speaking, but also musical instruments (piano, guitar, organ, drums, etc.), or ambient sounds.\n\n" +
           "RULES:\n" +
-          '1. If the audio contains ONLY music, instruments, or singing with no clear spoken sermon content, respond with: {"music":"Piano playing"} or {"music":"Congregation singing"} or {"music":"Worship music"} etc. Be concise and descriptive.\n' +
+          "1. If audio is not spoken korean such as instrumental or music then do not print anything. When in doubt, always translate — a missed translation is far less harmful than silently dropping real sermon content.\n" +
           "2. If the audio contains spoken Korean sermon content (even alongside music), translate it normally.\n" +
           "3. Translate naturally and fluently. No wooden or literal phrasing.\n" +
           "4. Use context to maintain consistent terminology and complete sentences cut off mid-thought.\n" +
@@ -1505,7 +1828,7 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   model: "claude-sonnet-4-20250514",
-                  max_tokens: 1000,
+                  max_tokens: 400,
                   temperature: 0,
                   system: system,
                   messages: [{ role: "user", content: buildPrompt(korean) }],
@@ -1554,15 +1877,34 @@
 
       // ════════════════════════════════════════════════════════════
       //  BACKGROUND SUMMARY
+      //  Every SUMMARY_EVERY segments, Haiku produces a rolling 3-sentence
+      //  summary. Uses incremental approach: sends previous summary + only
+      //  the latest batch of segments (not the entire transcript), so Haiku
+      //  input stays ~constant regardless of sermon length.
       // ════════════════════════════════════════════════════════════
       async function generateSermonSummary() {
         summarizing = true;
         log("Updating sermon summary...", "info");
-        var transcript = allSegments
+
+        // Only send the latest batch, not the entire sermon
+        var startIdx = Math.max(0, allSegments.length - SUMMARY_EVERY);
+        var recentTranscript = allSegments
+          .slice(startIdx)
           .map(function (s, i) {
-            return "[" + (i + 1) + "] " + s.english;
+            return "[" + (startIdx + i + 1) + "] " + s.english;
           })
           .join("\n");
+
+        // First summary: cold start. Later summaries: build on the previous one.
+        var prompt = sermonSummary
+          ? "Here is your previous summary of this sermon:\n" +
+            sermonSummary +
+            "\n\nHere are the newest segments:\n" +
+            recentTranscript +
+            "\n\nUpdate your summary to incorporate the new content. Keep it to 3 sentences covering: main theme, key points, central scriptures, direction. Plain prose only."
+          : "Summarize this Christian sermon in 3 sentences for a translation assistant. Cover: main theme, key points, central scriptures, direction. Plain prose only.\n\n" +
+            recentTranscript;
+
         try {
           var controller = new AbortController();
           var timer = setTimeout(function () {
@@ -1577,14 +1919,7 @@
                 model: "claude-haiku-4-5-20251001",
                 max_tokens: 200,
                 temperature: 0,
-                messages: [
-                  {
-                    role: "user",
-                    content:
-                      "Summarize this Christian sermon in 3 sentences for a translation assistant. Cover: main theme, key points, central scriptures, direction. Plain prose only.\n\n" +
-                      transcript,
-                  },
-                ],
+                messages: [{ role: "user", content: prompt }],
               }),
               signal: controller.signal,
             });
@@ -1672,7 +2007,10 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  RENDER
+      //  RENDER — display translated text on screen
+      //  Splits English into sentences, highlights scripture refs,
+      //  makes each sentence contenteditable for inline corrections.
+      //  Pushes each entry to Redis for phone sync.
       // ════════════════════════════════════════════════════════════
       function renderMusic(description) {
         var wrap = document.getElementById("transcript");
@@ -1702,10 +2040,14 @@
           "",
         );
         var rawSentences = englishText.match(/[^.!?]+[.!?]*/g) || [englishText];
-        // Filter out empty strings
-        var sentences = rawSentences.filter(function (s) {
-          return s.trim().length > 0;
-        });
+        // Filter out empty strings and strip leading quote/apostrophe artifacts from each sentence
+        var sentences = rawSentences
+          .map(function (s) {
+            return s.replace(/^[\s\u0027\u0022\u2018\u2019\u201C\u201D]+/, "");
+          })
+          .filter(function (s) {
+            return s.trim().length > 0;
+          });
 
         var sentencesHTML = sentences
           .map(function (s) {
@@ -1737,10 +2079,10 @@
           })
           .map(function (s) {
             return (
-              '<span class="scripture-callout">&#128214; ' +
+              '<span class="scripture-callout">(' +
               esc(s.ref) +
               (s.note ? " \u2014 " + esc(s.note) : "") +
-              "</span>"
+              ")</span>"
             );
           })
           .join("");
@@ -1769,21 +2111,44 @@
       }
 
       // ════════════════════════════════════════════════════════════
-      //  TYPOGRAPHY CONTROLS
+      //  TYPOGRAPHY CONTROLS — dual slider + number input
+      //  oninput: live CSS preview + extend grace period (no Redis push)
+      //  onchange: commit to CSS + push to Redis for cross-device sync
       // ════════════════════════════════════════════════════════════
+
+      // Live preview only (oninput) — no Redis push.
+      // Also extends the grace period so pollRemote can't overwrite an in-progress drag.
+      function applyTypographyLocal(fs, lh) {
+        _lastLocalTypoTime = Date.now();
+        if (fs !== null && fs !== undefined)
+          document.documentElement.style.setProperty(
+            "--sentence-size",
+            parseInt(fs) + "px",
+          );
+        if (lh !== null && lh !== undefined)
+          document.documentElement.style.setProperty(
+            "--sentence-spacing",
+            parseInt(lh) + "px",
+          );
+      }
+
+      // Commit (onchange) — applies CSS vars + pushes to Redis.
+      // Must prefer the ACTIVE device's input — on remote, the hidden
+      // laptop inputs still exist in the DOM with stale default values.
       function applyTypography() {
-        var fontSize = parseInt(
-          document.getElementById("font-size-slider").value,
-        );
-        var lineHeight = parseInt(
-          document.getElementById("line-height-slider").value,
-        );
+        var fsEl = isRemote
+          ? document.getElementById("remote-font-input") ||
+            document.getElementById("font-size-input")
+          : document.getElementById("font-size-input") ||
+            document.getElementById("remote-font-input");
+        var lhEl = isRemote
+          ? document.getElementById("remote-spacing-input") ||
+            document.getElementById("line-height-input")
+          : document.getElementById("line-height-input") ||
+            document.getElementById("remote-spacing-input");
+        var fontSize = fsEl ? parseInt(fsEl.value) : 46;
+        var lineHeight = lhEl ? parseInt(lhEl.value) : 20;
 
-        document.getElementById("font-size-val").textContent = fontSize + "px";
-        document.getElementById("line-height-val").textContent =
-          lineHeight + "px";
-
-        // Apply to all existing and future sentences via CSS vars
         document.documentElement.style.setProperty(
           "--sentence-size",
           fontSize + "px",
@@ -1821,8 +2186,12 @@
             if (_scrollLock) return; // our own animation — ignore
             clearTimeout(_sct);
             _sct = setTimeout(function () {
+              // "At bottom" = near absolute bottom OR near the capped scroll target
+              // (at large fonts the target is capped at the entry top, not absolute bottom)
               var atBot =
-                main.scrollHeight - main.scrollTop - main.clientHeight < 80;
+                main.scrollHeight - main.scrollTop - main.clientHeight < 80 ||
+                (_scrollTarget > 0 &&
+                  Math.abs(main.scrollTop - _scrollTarget) < 80);
               if (autoScroll !== atBot) {
                 autoScroll = atBot;
                 updateFollowBtn();
@@ -1843,11 +2212,6 @@
           applyTypography();
           setInterval(pollCommands, 3000);
         }
-      });
-
-      // Download transcript if page is closed or refreshed (laptop only)
-      window.addEventListener("beforeunload", function () {
-        if (!isRemote) downloadTranscript("Page closed");
       });
 
       // ════════════════════════════════════════════════════════════

@@ -1,3 +1,7 @@
+// sync-command — simple command queue (one slot) for phone → laptop control.
+// POST: phone writes a command (start, stop, mute, unmute, clear, setChunkMs)
+// GET:  laptop reads the latest command (also folded into sync-pull now)
+
 const UPSTASH_URL   = process.env.UPSTASH_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_TOKEN;
 
