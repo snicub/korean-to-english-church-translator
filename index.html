@@ -28,7 +28,7 @@
       #main {
         flex: 1;
         overflow-y: auto;
-        padding: 60px 80px 50vh;
+        padding: 60px 80px 7.5vh;
         will-change: scroll-position;
         -webkit-overflow-scrolling: touch;
       }
@@ -61,17 +61,16 @@
         text-transform: uppercase;
       }
 
-      /* Each segment block */
+      /* Each segment block — fade in only, no translateY shift
+         (vertical shift fights scroll positioning and causes jitter) */
       .entry {
-        margin-bottom: 60px;
-        animation: up 0.2s ease forwards;
+        margin-bottom: var(--chunk-spacing, 60px);
+        animation: fadeIn 0.45s ease forwards;
         opacity: 0;
-        transform: translateY(8px);
       }
-      @keyframes up {
+      @keyframes fadeIn {
         to {
           opacity: 1;
-          transform: translateY(0);
         }
       }
 
@@ -111,12 +110,12 @@
       /* Music / instrument detected */
       .music-label {
         display: block;
-        margin-bottom: 60px;
+        margin-bottom: var(--chunk-spacing, 60px);
         font-size: 12px;
         letter-spacing: 3px;
         text-transform: uppercase;
         color: #666;
-        animation: up 0.2s ease forwards;
+        animation: fadeIn 0.45s ease forwards;
         opacity: 0;
       }
       .music-label::before {
@@ -520,7 +519,7 @@
           />
         </div>
         <div class="control-group">
-          <span class="control-label">Spacing</span>
+          <span class="control-label">Line</span>
           <input
             type="range"
             class="slider"
@@ -529,7 +528,7 @@
             max="150"
             value="20"
             oninput="
-              applyTypographyLocal(null, this.value);
+              applyTypographyLocal(null, this.value, null);
               document.getElementById('line-height-input').value = this.value;
             "
             onchange="applyTypography()"
@@ -541,8 +540,36 @@
             max="150"
             value="20"
             oninput="
-              applyTypographyLocal(null, this.value);
+              applyTypographyLocal(null, this.value, null);
               document.getElementById('line-height-slider').value = this.value;
+            "
+            onchange="applyTypography()"
+          />
+        </div>
+        <div class="control-group">
+          <span class="control-label">Chunk</span>
+          <input
+            type="range"
+            class="slider"
+            id="chunk-spacing-slider"
+            min="10"
+            max="200"
+            value="60"
+            oninput="
+              applyTypographyLocal(null, null, this.value);
+              document.getElementById('chunk-spacing-input').value = this.value;
+            "
+            onchange="applyTypography()"
+          />
+          <input
+            type="number"
+            id="chunk-spacing-input"
+            min="10"
+            max="200"
+            value="60"
+            oninput="
+              applyTypographyLocal(null, null, this.value);
+              document.getElementById('chunk-spacing-slider').value = this.value;
             "
             onchange="applyTypography()"
           />
@@ -555,7 +582,7 @@
             id="scroll-speed-slider"
             min="40"
             max="500"
-            value="100"
+            value="70"
             oninput="
               scrollSpeed = parseInt(this.value);
               _lastLocalTypoTime = Date.now();
@@ -568,7 +595,7 @@
             id="scroll-speed-input"
             min="40"
             max="500"
-            value="100"
+            value="70"
             oninput="
               scrollSpeed = parseInt(this.value);
               _lastLocalTypoTime = Date.now();
@@ -623,111 +650,99 @@
       // ═══════════════════════════════════════════════════════════════
 
       // ════════════════════════════════════════════════════════════
-      //  SCROLL — speed-controlled smooth auto-follow
-      //  Animates to bottom when new content arrives; pauses when user scrolls up.
+      //  SCROLL — pure teleprompter
+      //  Always scrolls at a constant scrollSpeed px/s — no snapping,
+      //  no jumping.  The loop stays alive while there's content below;
+      //  when new text arrives, the loop just keeps going.
       // ════════════════════════════════════════════════════════════
-      var autoScroll = true; // follows new content only when true
-      var scrollSpeed = 100; // pixels per second
-      var _scrollAnim = null; // rAF id for current animation
-      var _scrollLock = false; // true while we're animating (block scroll events)
-      var _scrollTarget = 0; // last scroll target (may be capped for large entries)
-      var _lastLocalTypoTime = 0; // grace period guard against poll overwriting local changes
+      var autoScroll = true;
+      var scrollSpeed = 70; // pixels per second
+      var _scrollRAF = null;
+      var _scrollLock = false;
+      var _scrollTarget = 0;
+      var _scrollLastT = 0;
+      var _scrollSubPx = 0;
+      var _lastLocalTypoTime = 0;
+      var SCROLL_FILL_THRESHOLD = 0.65; // content must fill 65% of viewport to auto-scroll
 
+      // True when transcript content is tall enough to warrant scrolling
+      function _contentFillsViewport() {
+        var transcript = document.getElementById("transcript");
+        var main = document.getElementById("main");
+        return (
+          transcript.offsetHeight >= main.clientHeight * SCROLL_FILL_THRESHOLD
+        );
+      }
+
+      function _scrollStep(now) {
+        var main = document.getElementById("main");
+        var dt = (now - _scrollLastT) / 1000;
+        _scrollLastT = now;
+        if (dt > 0.1) dt = 0.1;
+
+        // Not enough content yet — stay alive but don't move
+        if (!_contentFillsViewport()) {
+          _scrollLock = false;
+          _scrollRAF = requestAnimationFrame(_scrollStep);
+          return;
+        }
+
+        var maxScroll = main.scrollHeight - main.clientHeight;
+        var remaining = maxScroll - main.scrollTop;
+        _scrollTarget = maxScroll;
+
+        if (remaining < 1) {
+          // At the bottom — keep loop alive so new content is picked up
+          _scrollLock = false;
+          _scrollRAF = requestAnimationFrame(_scrollStep);
+          return;
+        }
+
+        _scrollLock = true;
+
+        // Constant speed, never overshoot
+        var move = Math.min(scrollSpeed * dt, remaining);
+
+        _scrollSubPx += move;
+        var intMove = Math.floor(_scrollSubPx);
+        if (intMove >= 1) {
+          main.scrollTop += intMove;
+          _scrollSubPx -= intMove;
+        }
+
+        _scrollRAF = requestAnimationFrame(_scrollStep);
+      }
+
+      // Ensure the scroll loop is running (idempotent)
       function scrollToBottom() {
         if (document.activeElement && document.activeElement.isContentEditable)
           return;
         if (!autoScroll) return;
-        requestAnimationFrame(function () {
-          var main = document.getElementById("main");
-          var target = main.scrollHeight - main.clientHeight;
+        if (_scrollRAF) return; // already running
 
-          // Cap target so the newest entry's top is always visible.
-          // At large font sizes a single entry can be taller than the viewport;
-          // scrolling to absolute bottom would push its start off-screen.
-          var lastEl = document.getElementById("transcript").lastElementChild;
-          if (lastEl) {
-            var entryTop = 0;
-            var el = lastEl;
-            while (el && el !== main) {
-              entryTop += el.offsetTop;
-              el = el.offsetParent;
-            }
-            target = Math.min(target, Math.max(entryTop - 80, 0));
-          }
-
-          _scrollTarget = target;
-          var dist = target - main.scrollTop;
-          if (dist <= 2) return;
-
-          // Cancel any running scroll animation so we can restart cleanly
-          if (_scrollAnim) {
-            clearTimeout(_scrollAnim);
-            _scrollAnim = null;
-            var content0 = document.getElementById("transcript");
-            // Grab current visual position before clearing the transform
-            var curTransform = getComputedStyle(content0).transform;
-            content0.style.transition = "";
-            content0.style.transform = "";
-            content0.style.willChange = "";
-            // If there was an active transform, adjust scrollTop to match visual pos
-            if (curTransform && curTransform !== "none") {
-              // matrix(1, 0, 0, 1, 0, ty) — ty is the last value
-              var parts = curTransform.match(/matrix.*\((.+)\)/);
-              if (parts) {
-                var ty = parseFloat(parts[1].split(",").pop());
-                if (ty) main.scrollTop = main.scrollTop + ty;
-              }
-            }
-          }
-
-          // GPU-accelerated smooth scroll using CSS transform.
-          // scrollTop is integer-only, so at slow speeds (100 px/s ≈ 1.67 px/frame)
-          // it alternates between 1px and 2px jumps — visible stutter.
-          // Instead: jump scrollTop to target instantly, then offset the content
-          // back with translateY and animate that to 0 via CSS transition.
-          // The GPU composites transforms at sub-pixel precision — butter smooth.
-          var content = document.getElementById("transcript");
-          _scrollLock = true;
-
-          // Snap scroll position to target (invisible — offset cancels it)
-          main.scrollTop = target;
-          // Offset content back to where it visually was
-          content.style.transition = "none";
-          content.style.transform = "translateY(" + dist + "px)";
-          content.style.willChange = "transform";
-
-          // Force style recalc so the browser registers the starting position
-          content.offsetHeight;
-
-          // Animate transform to 0 at the desired speed — linear, constant pace
-          var dur = Math.max((dist / scrollSpeed) * 1000, 400);
-          content.style.transition = "transform " + dur + "ms linear";
-          content.style.transform = "translateY(0)";
-
-          // Clean up when animation completes
-          function onDone() {
-            content.removeEventListener("transitionend", onDone);
-            clearTimeout(fallback);
-            content.style.transition = "";
-            content.style.transform = "";
-            content.style.willChange = "";
-            _scrollLock = false;
-            _scrollAnim = null;
-          }
-          content.addEventListener("transitionend", onDone);
-          // Fallback in case transitionend doesn't fire (e.g. 0-distance edge case)
-          var fallback = setTimeout(onDone, dur + 100);
-          _scrollAnim = fallback; // store so we can cancel on re-entry
-        });
+        _scrollLastT = performance.now();
+        _scrollSubPx = 0;
+        _scrollRAF = requestAnimationFrame(_scrollStep);
       }
 
-      // Re-enable auto-scroll and snap to bottom (user action)
+      // Stop the teleprompter loop (user grabbed the scroll)
+      function cancelScrollAnim() {
+        if (_scrollRAF) {
+          cancelAnimationFrame(_scrollRAF);
+          _scrollRAF = null;
+        }
+        _scrollLock = false;
+        _scrollSubPx = 0;
+      }
+
+      // Follow button — snap to bottom immediately
       function resumeAutoScroll() {
+        cancelScrollAnim();
         autoScroll = true;
         updateFollowBtn();
         _scrollLock = true;
         var main = document.getElementById("main");
-        main.scrollTop = main.scrollHeight;
+        main.scrollTop = main.scrollHeight - main.clientHeight;
         requestAnimationFrame(function () {
           _scrollLock = false;
         });
@@ -812,7 +827,7 @@
         sermonTitle = title || "";
         var displayEl = document.getElementById("sermon-title-display");
         if (displayEl) {
-          displayEl.textContent = sermonTitle;
+          displayEl.textContent = sermonTitle ? "Sermon Title: " + sermonTitle : "";
           displayEl.style.display = sermonTitle ? "block" : "none";
         }
         if (sermonTitle) {
@@ -971,6 +986,12 @@
             document.getElementById("chunk-ms") ||
             document.getElementById("remote-chunk-ms");
           var chunkMs = chunkEl ? parseInt(chunkEl.value) : 30000;
+          var csEl = isRemote
+            ? document.getElementById("remote-chunk-spacing-slider") ||
+              document.getElementById("chunk-spacing-slider")
+            : document.getElementById("chunk-spacing-slider") ||
+              document.getElementById("remote-chunk-spacing-slider");
+          var chunkSpacing = csEl ? parseInt(csEl.value) : 60;
           fetch("/api/sync-push", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -979,6 +1000,7 @@
               data: {
                 fontSize: fontSize,
                 lineHeight: lineHeight,
+                chunkSpacing: chunkSpacing,
                 scrollSpeed: scrollSpeed,
                 chunkMs: chunkMs,
                 sermonTitle: sermonTitle,
@@ -1022,6 +1044,20 @@
           if (rlh) rlh.value = typo.lineHeight;
           var rlhs = document.getElementById("remote-spacing-slider");
           if (rlhs) rlhs.value = typo.lineHeight;
+        }
+        if (typo.chunkSpacing) {
+          document.documentElement.style.setProperty(
+            "--chunk-spacing",
+            typo.chunkSpacing + "px",
+          );
+          var csi = document.getElementById("chunk-spacing-input");
+          if (csi) csi.value = typo.chunkSpacing;
+          var css2 = document.getElementById("chunk-spacing-slider");
+          if (css2) css2.value = typo.chunkSpacing;
+          var rcsi = document.getElementById("remote-chunk-spacing-input");
+          if (rcsi) rcsi.value = typo.chunkSpacing;
+          var rcss = document.getElementById("remote-chunk-spacing-slider");
+          if (rcss) rcss.value = typo.chunkSpacing;
         }
         if (typo.scrollSpeed) {
           scrollSpeed = typo.scrollSpeed;
@@ -1351,14 +1387,18 @@
           '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
           "</select>" +
           '<span class="control-label" style="margin-left:6px">Size</span>' +
-          '<input type="range" class="slider" id="remote-font-slider" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null);document.getElementById(\'remote-font-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
-          '<input type="number" id="remote-font-input" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null);document.getElementById(\'remote-font-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
-          '<span class="control-label">Spacing</span>' +
-          '<input type="range" class="slider" id="remote-spacing-slider" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value);document.getElementById(\'remote-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
-          '<input type="number" id="remote-spacing-input" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value);document.getElementById(\'remote-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
+          '<input type="range" class="slider" id="remote-font-slider" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-font-input" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
+          '<span class="control-label">Line</span>' +
+          '<input type="range" class="slider" id="remote-spacing-slider" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'remote-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-spacing-input" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'remote-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
+          '<span class="control-label">Chunk</span>' +
+          '<input type="range" class="slider" id="remote-chunk-spacing-slider" min="10" max="200" value="60" oninput="applyTypographyLocal(null,null,this.value);document.getElementById(\'remote-chunk-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-chunk-spacing-input" min="10" max="200" value="60" oninput="applyTypographyLocal(null,null,this.value);document.getElementById(\'remote-chunk-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
           '<span class="control-label">Scroll</span>' +
-          '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="100" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-input\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:70px">' +
-          '<input type="number" id="remote-scroll-input" min="40" max="500" value="100" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-slider\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:56px">' +
+          '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="70" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-input\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:70px">' +
+          '<input type="number" id="remote-scroll-input" min="40" max="500" value="70" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-slider\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:56px">' +
+          "</div>" +
           "</div>";
         document.body.appendChild(panel);
 
@@ -1662,13 +1702,19 @@
 
         try {
           // If session was stopped while we were queued, skip entirely
-          if (_stoppedAt > chunkStarted) { busy = false; return; }
+          if (_stoppedAt > chunkStarted) {
+            busy = false;
+            return;
+          }
 
           log("Groq transcribing...");
           var korean = await groqTranscribe(blob);
 
           // If session was stopped during transcription, skip
-          if (_stoppedAt > chunkStarted) { busy = false; return; }
+          if (_stoppedAt > chunkStarted) {
+            busy = false;
+            return;
+          }
 
           if (!korean || korean.trim().length < 3) {
             log("No speech detected.", "warn");
@@ -1688,7 +1734,10 @@
             var result = await claudeTranslate(korean);
 
             // If session was stopped during translation, skip render+push
-            if (_stoppedAt > chunkStarted) { busy = false; return; }
+            if (_stoppedAt > chunkStarted) {
+              busy = false;
+              return;
+            }
 
             if (result.music) {
               log("Music detected: " + result.music, "info");
@@ -2178,7 +2227,7 @@
 
       // Live preview only (oninput) — no Redis push.
       // Also extends the grace period so pollRemote can't overwrite an in-progress drag.
-      function applyTypographyLocal(fs, lh) {
+      function applyTypographyLocal(fs, lh, cs) {
         _lastLocalTypoTime = Date.now();
         if (fs !== null && fs !== undefined)
           document.documentElement.style.setProperty(
@@ -2189,6 +2238,11 @@
           document.documentElement.style.setProperty(
             "--sentence-spacing",
             parseInt(lh) + "px",
+          );
+        if (cs !== null && cs !== undefined)
+          document.documentElement.style.setProperty(
+            "--chunk-spacing",
+            parseInt(cs) + "px",
           );
       }
 
@@ -2206,8 +2260,14 @@
             document.getElementById("line-height-input")
           : document.getElementById("line-height-input") ||
             document.getElementById("remote-spacing-input");
+        var csEl = isRemote
+          ? document.getElementById("remote-chunk-spacing-input") ||
+            document.getElementById("chunk-spacing-input")
+          : document.getElementById("chunk-spacing-input") ||
+            document.getElementById("remote-chunk-spacing-input");
         var fontSize = fsEl ? parseInt(fsEl.value) : 46;
         var lineHeight = lhEl ? parseInt(lhEl.value) : 20;
+        var chunkSpacing = csEl ? parseInt(csEl.value) : 60;
 
         document.documentElement.style.setProperty(
           "--sentence-size",
@@ -2216,6 +2276,10 @@
         document.documentElement.style.setProperty(
           "--sentence-spacing",
           lineHeight + "px",
+        );
+        document.documentElement.style.setProperty(
+          "--chunk-spacing",
+          chunkSpacing + "px",
         );
         pushTypoSync();
       }
@@ -2233,36 +2297,10 @@
           var main = document.getElementById("main");
           var _sct = null;
 
-          // Cancel any running scroll animation (user grabbed the scroll)
-          function cancelScrollAnim() {
-            if (_scrollAnim) {
-              clearTimeout(_scrollAnim);
-              _scrollAnim = null;
-            }
-            var ct = document.getElementById("transcript");
-            if (ct) {
-              // Snap visual position to current transform state before clearing
-              var cs = getComputedStyle(ct).transform;
-              ct.style.transition = "";
-              ct.style.transform = "";
-              ct.style.willChange = "";
-              if (cs && cs !== "none") {
-                var m = cs.match(/matrix.*\((.+)\)/);
-                if (m) {
-                  var ty = parseFloat(m[1].split(",").pop());
-                  if (ty) main.scrollTop = main.scrollTop + ty;
-                }
-              }
-            }
-            _scrollLock = false;
-          }
-
           main.addEventListener("scroll", function () {
             if (_scrollLock) return; // our own animation — ignore
             clearTimeout(_sct);
             _sct = setTimeout(function () {
-              // "At bottom" = near absolute bottom OR near the capped scroll target
-              // (at large fonts the target is capped at the entry top, not absolute bottom)
               var atBot =
                 main.scrollHeight - main.scrollTop - main.clientHeight < 80 ||
                 (_scrollTarget > 0 &&
@@ -2270,6 +2308,8 @@
               if (autoScroll !== atBot) {
                 autoScroll = atBot;
                 updateFollowBtn();
+                // User scrolled back to bottom — restart the teleprompter
+                if (atBot) scrollToBottom();
               }
             }, 120);
           });

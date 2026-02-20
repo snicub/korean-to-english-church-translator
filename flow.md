@@ -5,7 +5,7 @@
 
 ## What It Does
 
-A pastor speaks in **Korean**. Within about 35–45 seconds, the English translation appears on a display screen — broken into clean, readable sentences — updated live throughout the entire service.
+A pastor speaks in **Korean**. On average within about **18 seconds** (worst case ~30s), the English translation appears on a display screen — broken into clean, readable sentences — updated live throughout the entire service.
 
 A second person can follow along and control the display from their **phone**, on the same Wi-Fi or mobile data, anywhere in the world.
 
@@ -82,7 +82,7 @@ A second person can follow along and control the display from their **phone**, o
 | **Why Claude?** | Claude produces significantly more natural-sounding English than other models on nuanced, theological Korean. It understands context, completes cut-off thoughts, and avoids robotic phrasing. |
 | **Why Sonnet (not Haiku or Opus)?** | Sonnet hits the sweet spot — Haiku is too fast/simple and produces stiffer translations; Opus costs 5× more with only marginal improvement for this task. |
 | **Context window** | Claude sees the last **3** translated segments as background context (reduced from 8 — ~60% fewer input tokens with negligible quality loss), plus a rolling sermon summary for long-term thematic consistency. It also receives the tail of the previous translation so it can continue a sentence that was cut off mid-speech by the chunk boundary. |
-| **Max output tokens** | Capped at 400 (a 30-second chunk rarely produces more than ~150 tokens of English). |
+| **Max output tokens** | Capped at 400 (a 20-second chunk rarely produces more than ~150 tokens of English). |
 | **Special rules given to Claude** | Remove filler words (um, uh, 그, 이제…); preserve theological terms correctly; only label a segment as music if it is *purely instrumental* with no words — brief congregational responses like 아멘 are translated as speech; never start a sentence with a stray apostrophe from a chunk cut. |
 
 ---
@@ -104,25 +104,27 @@ A second person can follow along and control the display from their **phone**, o
 From the moment the pastor speaks a sentence to when it appears on screen:
 
 ```
-  0s ──────────────────────────────────────────────────────── ~45s
-
-  [Recording 30s chunk ──────────────────]
-                                          [Whisper: 2–5s]
-                                                         [Claude: 3–8s]
-                                                                       ▲
-                                                                  Text appears
+  0s ──────────────────────────────────────── ~28s
+                                                  (average ~18s from speech)
+  [Recording 20s chunk ──────────]
+                                  [Whisper: 2–5s]
+                                                 [Claude: 3–8s]
+                                                               ▲
+                                                          Text appears
 ```
 
 | Step | Typical time |
 |---|---|
-| Audio chunk recording | 30 seconds (configurable: 20s / 25s / 30s) |
+| Audio chunk recording | **20 seconds** (default; configurable: 20s / 25s / 30s) |
 | Upload + Whisper transcription | 2–5 seconds |
 | Claude translation | 3–8 seconds |
-| **Total delay from speech → screen** | **~35–45 seconds** |
+| **Worst case (speech at chunk start)** | **~28–33 seconds** |
+| **Average (speech mid-chunk)** | **~18 seconds** |
+| **Best case (speech at chunk end)** | **~5 seconds** |
 | Phone refresh lag (after laptop gets it) | up to 1.5 seconds |
 
-> **Why 30-second chunks?**
-> Shorter chunks (10–15s) feel faster, but very short clips often don't have enough context for Whisper to transcribe accurately — especially mid-sentence. 30 seconds gives both AIs enough material to produce a clean, complete translation.
+> **Why 20-second chunks?**
+> Shorter chunks (10–15s) feel faster, but very short clips often don't have enough context for Whisper to transcribe accurately — especially mid-sentence. 20 seconds is the sweet spot — enough material for clean transcription while keeping the average delay under 20 seconds. Longer options (25s / 30s) are available for situations where accuracy matters more than speed.
 
 ---
 
@@ -191,7 +193,7 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 | Speech-to-text | **Groq API** | Pay-per-second of audio |
 | Translation + summary | **Anthropic API** | Pay-per-token (words processed) |
 
-> **Cost per Sunday:** At typical sermon lengths (45–60 min), estimated API cost is **$0.30–$1.50 per service**, dominated by Claude Sonnet translation calls. Costs are lower than earlier versions thanks to the reduced context window (3 segments instead of 8) and incremental summaries.
+> **Cost per Sunday:** At typical sermon lengths (45–60 min), estimated API cost is **$0.20–$0.50 per service**, dominated by Claude Sonnet translation calls. Costs are lower than earlier versions thanks to the reduced context window (3 segments instead of 8) and incremental summaries.
 
 ---
 
@@ -277,7 +279,7 @@ Several design choices keep API costs low without sacrificing translation qualit
 |---|---|
 | **Context window: 3 segments** | Claude sees only the last 3 translated segments (not 8). This cuts ~60% of input tokens per translation call with negligible quality loss — the rolling summary fills in long-term context. |
 | **Incremental summaries** | Haiku receives previous summary + latest 8 segments, not the entire sermon. Keeps summary input at ~constant size. Over a 60-min sermon, this is ~5–9× fewer Haiku tokens. |
-| **Max output tokens: 400** | A 30-second chunk rarely produces more than ~150 English tokens. Capping at 400 (instead of 1000) is safe with plenty of headroom. |
+| **Max output tokens: 400** | A 20-second chunk rarely produces more than ~150 English tokens. Capping at 400 (instead of 1000) is safe with plenty of headroom. |
 | **Cached MIME detection** | `MediaRecorder.isTypeSupported()` is called once and cached, not every chunk. |
 | **Single-endpoint polling** | Laptop polls one URL for commands + edits + typography (was two separate fetches). Halves HTTP requests from 40/min to 20/min. |
 | **No Whisper fallback prompt** | First segment sends empty prompt to Whisper. Sending keyword lists caused hallucinations on silence that cost extra Claude calls to process. |
