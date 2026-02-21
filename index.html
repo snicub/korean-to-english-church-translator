@@ -2440,7 +2440,24 @@
       }
 
       // Init CSS vars on load; block Enter inside editable sentences
+      // ── Wake Lock — prevent screen sleep while app is open ──
+      var _wakeLock = null;
+      async function requestWakeLock() {
+        try {
+          if ("wakeLock" in navigator) {
+            _wakeLock = await navigator.wakeLock.request("screen");
+            _wakeLock.addEventListener("release", function () {
+              _wakeLock = null;
+            });
+          }
+        } catch (_) {}
+      }
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible") requestWakeLock();
+      });
+
       document.addEventListener("DOMContentLoaded", function () {
+        requestWakeLock();
         if (adminKey) log("Waiting for sermon\u2026", "info");
         document
           .getElementById("transcript")
