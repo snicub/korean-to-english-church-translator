@@ -912,7 +912,7 @@
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify({
-              model: "claude-sonnet-4-5-20250929",
+              model: "claude-sonnet-4-20250514",
               max_tokens: 100,
               temperature: 0,
               system:
@@ -1943,10 +1943,10 @@
         return p;
       }
 
-      var SONNET_45_MODEL = "claude-sonnet-4-5-20250929";
       var SONNET_MODEL = "claude-sonnet-4-20250514";
+      var SONNET_45_MODEL = "claude-sonnet-4-5-20250929";
       var HAIKU_MODEL = "claude-haiku-4-5-20251001";
-      var _fallbackLevel = 0; // 0=sonnet4.5, 1=sonnet4.6, 2=haiku
+      var _fallbackLevel = 0; // 0=sonnet4.6, 1=sonnet4.5, 2=haiku
       var _recoveryCheck = 0; // alternates recovery probes while on haiku
 
       async function claudeTranslate(korean) {
@@ -2033,21 +2033,21 @@
         // ── While on Haiku fallback: probe higher models to recover ──
         if (_fallbackLevel === 2) {
           _recoveryCheck++;
-          // Always probe Sonnet 4.5
+          // Always probe Sonnet 4.6
           try {
-            var result = await tryModel(SONNET_45_MODEL);
+            var result = await tryModel(SONNET_MODEL);
             _fallbackLevel = 0;
-            log("Sonnet 4.5 is back — resuming primary model.", "info");
+            log("Sonnet 4.6 is back — resuming primary model.", "info");
             return result;
           } catch (e) {
             lastErr = e;
           }
-          // Every other call, also probe Sonnet 4.6
+          // Every other call, also probe Sonnet 4.5
           if (_recoveryCheck % 2 === 0) {
             try {
-              var result = await tryModel(SONNET_MODEL);
+              var result = await tryModel(SONNET_45_MODEL);
               _fallbackLevel = 1;
-              log("Sonnet 4.6 is back — using as fallback.", "info");
+              log("Sonnet 4.5 is back — using as fallback.", "info");
               return result;
             } catch (e) {
               lastErr = e;
@@ -2061,34 +2061,34 @@
           }
         }
 
-        // ── While on Sonnet 4.6 fallback: probe 4.5 first ──
+        // ── While on Sonnet 4.5 fallback: probe 4.6 first ──
         if (_fallbackLevel === 1) {
           try {
-            var result = await tryModel(SONNET_45_MODEL);
+            var result = await tryModel(SONNET_MODEL);
             _fallbackLevel = 0;
-            log("Sonnet 4.5 is back — resuming primary model.", "info");
+            log("Sonnet 4.6 is back — resuming primary model.", "info");
             return result;
           } catch (e) {
             lastErr = e;
           }
-          // Try Sonnet 4.6 (up to 2 attempts)
+          // Try Sonnet 4.5 (up to 2 attempts)
           for (var attempt = 1; attempt <= 2; attempt++) {
             try {
-              return await tryModel(SONNET_MODEL);
+              return await tryModel(SONNET_45_MODEL);
             } catch (e) {
               lastErr = e;
               if (attempt < 2) {
-                log("Sonnet 4.6 retry...", "warn");
+                log("Sonnet 4.5 retry...", "warn");
                 await new Promise(function (r) {
                   setTimeout(r, 1500);
                 });
               }
             }
           }
-          // Sonnet 4.6 also failed — drop to Haiku
+          // Sonnet 4.5 also failed — drop to Haiku
           _fallbackLevel = 2;
           _recoveryCheck = 0;
-          log("Sonnet 4.6 overloaded — falling back to Haiku.", "warn");
+          log("Sonnet 4.5 overloaded — falling back to Haiku.", "warn");
           try {
             return await tryModel(HAIKU_MODEL);
           } catch (e) {
@@ -2096,10 +2096,10 @@
           }
         }
 
-        // ── Primary path: Sonnet 4.5 (up to 2 attempts) ──
+        // ── Primary path: Sonnet 4.6 (up to 2 attempts) ──
         for (var attempt = 1; attempt <= 2; attempt++) {
           try {
-            return await tryModel(SONNET_45_MODEL);
+            return await tryModel(SONNET_MODEL);
           } catch (e) {
             lastErr = e;
             if (attempt < 2) {
@@ -2111,16 +2111,16 @@
           }
         }
 
-        // Sonnet 4.5 failed 2x — try Sonnet 4.6 (up to 2 attempts)
+        // Sonnet 4.6 failed 2x — try Sonnet 4.5 (up to 2 attempts)
         _fallbackLevel = 1;
-        log("Sonnet 4.5 overloaded — falling back to Sonnet 4.6.", "warn");
+        log("Sonnet 4.6 overloaded — falling back to Sonnet 4.5.", "warn");
         for (var attempt = 1; attempt <= 2; attempt++) {
           try {
-            return await tryModel(SONNET_MODEL);
+            return await tryModel(SONNET_45_MODEL);
           } catch (e) {
             lastErr = e;
             if (attempt < 2) {
-              log("Sonnet 4.6 retry...", "warn");
+              log("Sonnet 4.5 retry...", "warn");
               await new Promise(function (r) {
                 setTimeout(r, 1500);
               });
@@ -2128,10 +2128,10 @@
           }
         }
 
-        // Sonnet 4.6 also failed 2x — drop to Haiku
+        // Sonnet 4.5 also failed 2x — drop to Haiku
         _fallbackLevel = 2;
         _recoveryCheck = 0;
-        log("Sonnet 4.6 overloaded — falling back to Haiku.", "warn");
+        log("Sonnet 4.5 overloaded — falling back to Haiku.", "warn");
         try {
           return await tryModel(HAIKU_MODEL);
         } catch (e) {
