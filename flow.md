@@ -32,8 +32,19 @@ A second person can follow along and control the display from their **phone**, o
   ┌───────────────────┐
   │   Claude Sonnet   │  AI #2 — translates Korean → English
   │   (translation)   │  ~3–8 seconds
+  │                   │  Sees: last 3 segments + rolling summary + previous tail
   └────────┬──────────┘
            │  English sentences (editable inline)
+           │
+           │  ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
+           │     AI #3 — Claude Haiku (background, every 8 segments)
+           │  │                                                     │
+           │    Produces a rolling 3-sentence sermon summary that
+           │  │ is fed back to Sonnet as long-term context.         │
+           │    Uses incremental approach: previous summary + only
+           │  │ the latest 8 segments → keeps input ~constant size. │
+           │  └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+           │          ▲ summary fed back to Sonnet ▲
            ▼
   ┌───────────────────────────────────────┐
   │         Display Screen (Laptop)        │
@@ -176,7 +187,7 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 | **Sentence cut off mid-chunk** | The tail of the previous translation is sent to Claude as context, so the next chunk continues naturally |
 | **Stray apostrophe at start** | A system rule tells Claude never to begin with `'` or `"`, and a backup cleanup strips it if Claude forgets |
 | **Multiple chunks queued up** | Chunks are processed one at a time in order (a queue), never in parallel — this prevents jumbled output |
-| **Network timeout** | Both Whisper and Claude calls retry up to 3 times with increasing wait between attempts |
+| **Network timeout** | Whisper retries up to 3 times. Claude Sonnet 4.6 retries up to 2 times; if still failing (529/504), falls back to Sonnet 4.5 (2 tries), then Haiku. While on Haiku, every call probes Sonnet 4.6 to recover, and every other call also probes Sonnet 4.5. |
 | **Slider drag overwritten by sync** | A 1.5-second grace period prevents the background poll from resetting a control while the user is actively dragging it |
 | **Duplicate entries on rapid polls** | Phone-side rendering skips entries whose ID already exists in the DOM |
 | **Remote reads stale hidden inputs** | On the phone, the laptop's admin console HTML is hidden but still in the DOM. Typography functions use an `isRemote` guard to always read from the correct device's inputs first |
@@ -279,7 +290,7 @@ The display uses a teleprompter-style auto-scroll that creeps down at a constant
 - **Content fill threshold:** Scrolling doesn't begin until the transcript fills at least 65% of the viewport height. Short transcripts sit still.
 - **New entries fade in** with a 0.45s opacity animation (no vertical shift that would fight scroll positioning).
 - **User override:** Scrolling up with the mouse wheel or touch cancels auto-scroll. Scrolling back to the bottom re-enables it. The **Follow** button snaps to the bottom immediately.
-- **Two spacing controls:** "Line" adjusts the gap between sentences within a segment. "Chunk" adjusts the gap between translation segments.
+- **Two spacing controls:** "Line" adjusts the CSS line-height (spacing between wrapped lines within a sentence). "Segment" adjusts the gap between translation segments.
 
 ---
 

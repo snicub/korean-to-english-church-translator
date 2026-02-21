@@ -49,18 +49,6 @@
         width: 0;
       }
 
-      #empty {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 100%;
-        opacity: 0.12;
-        font-size: 15px;
-        font-weight: 300;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-      }
-
       /* Each segment block — fade in only, no translateY shift
          (vertical shift fights scroll positioning and causes jitter) */
       .entry {
@@ -77,11 +65,11 @@
       /* Each sentence on its own line */
       .sentence {
         display: block;
-        font-size: var(--sentence-size, 46px);
-        line-height: 1.5;
+        font-size: var(--sentence-size, 83px);
+        line-height: var(--line-height, 1.5);
         font-weight: 300;
         color: #fff;
-        margin-bottom: var(--sentence-spacing, 20px);
+        margin-bottom: 8px;
       }
       .sentence:last-child {
         margin-bottom: 0;
@@ -100,11 +88,11 @@
       /* Scripture reference — inline, same size as sentences */
       .scripture-callout {
         display: block;
-        font-size: var(--sentence-size, 46px);
-        line-height: 1.5;
+        font-size: var(--sentence-size, 83px);
+        line-height: var(--line-height, 1.5);
         font-weight: 300;
         color: #666;
-        margin-bottom: var(--sentence-spacing, 20px);
+        margin-bottom: 8px;
       }
 
       /* Music / instrument detected */
@@ -400,17 +388,16 @@
       /* Sermon title — styled identically to transcript sentences */
       #sermon-title-display {
         display: none;
-        font-size: var(--sentence-size, 46px);
-        line-height: 1.5;
+        font-size: var(--sentence-size, 83px);
+        line-height: var(--line-height, 1.5);
         font-weight: 300;
         color: #fff;
-        margin-bottom: var(--sentence-spacing, 20px);
+        margin-bottom: 8px;
       }
     </style>
   </head>
   <body>
     <div id="main">
-      <div id="empty">Waiting for sermon&hellip;</div>
       <div id="sermon-title-display"></div>
       <div id="transcript"></div>
     </div>
@@ -491,14 +478,14 @@
           </select>
         </div>
         <div class="control-group">
-          <span class="control-label">Size</span>
+          <span class="control-label">Font Size</span>
           <input
             type="range"
             class="slider"
             id="font-size-slider"
             min="24"
             max="175"
-            value="46"
+            value="83"
             oninput="
               applyTypographyLocal(this.value, null);
               document.getElementById('font-size-input').value = this.value;
@@ -510,7 +497,7 @@
             id="font-size-input"
             min="24"
             max="175"
-            value="46"
+            value="83"
             oninput="
               applyTypographyLocal(this.value, null);
               document.getElementById('font-size-slider').value = this.value;
@@ -519,14 +506,14 @@
           />
         </div>
         <div class="control-group">
-          <span class="control-label">Line</span>
+          <span class="control-label">Line spacing</span>
           <input
             type="range"
             class="slider"
             id="line-height-slider"
-            min="12"
-            max="150"
-            value="20"
+            min="10"
+            max="40"
+            value="15"
             oninput="
               applyTypographyLocal(null, this.value, null);
               document.getElementById('line-height-input').value = this.value;
@@ -536,9 +523,9 @@
           <input
             type="number"
             id="line-height-input"
-            min="12"
-            max="150"
-            value="20"
+            min="10"
+            max="40"
+            value="15"
             oninput="
               applyTypographyLocal(null, this.value, null);
               document.getElementById('line-height-slider').value = this.value;
@@ -547,7 +534,7 @@
           />
         </div>
         <div class="control-group">
-          <span class="control-label">Chunk</span>
+          <span class="control-label">Segment spacing</span>
           <input
             type="range"
             class="slider"
@@ -576,14 +563,14 @@
           />
         </div>
         <div class="control-group">
-          <span class="control-label">Scroll</span>
+          <span class="control-label">Scroll Speed</span>
           <input
             type="range"
             class="slider"
             id="scroll-speed-slider"
             min="40"
             max="500"
-            value="70"
+            value="77"
             oninput="
               scrollSpeed = parseInt(this.value);
               _lastLocalTypoTime = Date.now();
@@ -596,7 +583,7 @@
             id="scroll-speed-input"
             min="40"
             max="500"
-            value="70"
+            value="77"
             oninput="
               scrollSpeed = parseInt(this.value);
               _lastLocalTypoTime = Date.now();
@@ -615,7 +602,7 @@
               margin-left: 4px;
             "
           >
-            &#8615; Follow
+            &#8615; Go to bottom
           </button>
         </div>
       </div>
@@ -657,7 +644,7 @@
       //  when new text arrives, the loop just keeps going.
       // ════════════════════════════════════════════════════════════
       var autoScroll = true;
-      var scrollSpeed = 70; // pixels per second
+      var scrollSpeed = 77; // pixels per second
       var _scrollRAF = null;
       var _scrollLock = false;
       var _scrollTarget = 0;
@@ -833,6 +820,7 @@
               if (r.ok) {
                 sessionStorage.setItem("adminKey", val);
                 overlay.remove();
+                log("Waiting for sermon\u2026", "info");
               } else {
                 adminKey = "";
                 document.getElementById("auth-error").textContent =
@@ -889,9 +877,6 @@
             ? "Sermon Title: " + sermonTitle
             : "";
           displayEl.style.display = sermonTitle ? "block" : "none";
-        }
-        if (sermonTitle) {
-          document.getElementById("empty").style.display = "none";
         }
         // Sync inputs without re-triggering oninput
         ["sermon-title-input", "remote-sermon-title-input"].forEach(
@@ -1040,8 +1025,8 @@
               document.getElementById("line-height-slider")
             : document.getElementById("line-height-slider") ||
               document.getElementById("remote-spacing-slider");
-          var fontSize = fsEl ? parseInt(fsEl.value) : 46;
-          var lineHeight = lhEl ? parseInt(lhEl.value) : 20;
+          var fontSize = fsEl ? parseInt(fsEl.value) : 83;
+          var lineHeight = lhEl ? parseInt(lhEl.value) : 15;
           var chunkEl =
             document.getElementById("chunk-ms") ||
             document.getElementById("remote-chunk-ms");
@@ -1093,8 +1078,8 @@
         }
         if (typo.lineHeight) {
           document.documentElement.style.setProperty(
-            "--sentence-spacing",
-            typo.lineHeight + "px",
+            "--line-height",
+            (typo.lineHeight / 10).toFixed(1),
           );
           var lh = document.getElementById("line-height-input");
           if (lh) lh.value = typo.lineHeight;
@@ -1247,8 +1232,6 @@
         if (!btnStart || !btnStop) return;
         btnStart.style.display = state.isListening ? "none" : "inline-block";
         btnStop.style.display = state.isListening ? "inline-block" : "none";
-        document.getElementById("empty").style.display =
-          state.isListening || sermonTitle ? "none" : "";
         if (state.isMuted !== undefined) {
           isMuted = state.isMuted;
           updateMuteBtn();
@@ -1260,7 +1243,6 @@
           lastEntryId = 0;
           lastEditId = 0;
           document.getElementById("transcript").innerHTML = "";
-          if (!sermonTitle) document.getElementById("empty").style.display = "";
         }
       }
 
@@ -1323,7 +1305,6 @@
           document.querySelector('[data-entry-id="' + entry.id + '"]')
         )
           return;
-        document.getElementById("empty").style.display = "none";
         var wrap = document.getElementById("transcript");
 
         if (entry.type === "music") {
@@ -1394,11 +1375,8 @@
         document.getElementById("console-drawer").style.display = "none";
 
         // Full-height transcript (no top bar by default)
-        document.documentElement.style.setProperty("--sentence-size", "46px");
-        document.documentElement.style.setProperty(
-          "--sentence-spacing",
-          "20px",
-        );
+        document.documentElement.style.setProperty("--sentence-size", "83px");
+        document.documentElement.style.setProperty("--line-height", "1.5");
 
         // Subtle gear toggle button — always visible, top-right
         var togBtn = document.createElement("button");
@@ -1449,17 +1427,17 @@
           '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
           "</select>" +
           '<span class="control-label" style="margin-left:6px">Size</span>' +
-          '<input type="range" class="slider" id="remote-font-slider" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
-          '<input type="number" id="remote-font-input" min="24" max="175" value="46" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
+          '<input type="range" class="slider" id="remote-font-slider" min="24" max="175" value="83" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-font-input" min="24" max="175" value="83" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
           '<span class="control-label">Line</span>' +
-          '<input type="range" class="slider" id="remote-spacing-slider" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'remote-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
-          '<input type="number" id="remote-spacing-input" min="12" max="150" value="20" oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'remote-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
-          '<span class="control-label">Chunk</span>' +
+          '<input type="range" class="slider" id="remote-spacing-slider" min="10" max="40" value="15" oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'remote-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
+          '<input type="number" id="remote-spacing-input" min="10" max="40" value="15" oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'remote-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
+          '<span class="control-label">Segment</span>' +
           '<input type="range" class="slider" id="remote-chunk-spacing-slider" min="10" max="200" value="60" oninput="applyTypographyLocal(null,null,this.value);document.getElementById(\'remote-chunk-spacing-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
           '<input type="number" id="remote-chunk-spacing-input" min="10" max="200" value="60" oninput="applyTypographyLocal(null,null,this.value);document.getElementById(\'remote-chunk-spacing-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
           '<span class="control-label">Scroll</span>' +
-          '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="70" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-input\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:70px">' +
-          '<input type="number" id="remote-scroll-input" min="40" max="500" value="70" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-slider\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:56px">' +
+          '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="77" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-input\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:70px">' +
+          '<input type="number" id="remote-scroll-input" min="40" max="500" value="77" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-slider\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:56px">' +
           "</div>" +
           "</div>";
         document.body.appendChild(panel);
@@ -1497,7 +1475,6 @@
         isListening = true;
         document.getElementById("btn-start").style.display = "none";
         document.getElementById("btn-stop").style.display = "inline-block";
-        document.getElementById("empty").style.display = "none";
         syncPopupState();
         pushSync("state", {
           isListening: true,
@@ -1619,7 +1596,6 @@
       function clearAll() {
         document.getElementById("transcript").innerHTML = "";
         document.getElementById("log-entries").innerHTML = "";
-        if (!sermonTitle) document.getElementById("empty").style.display = "";
         recentSegments = [];
         allSegments = [];
         sermonSummary = "";
@@ -1987,6 +1963,11 @@
           "7. Convert Korean Bible references: \uc694\ud55c\ubcf5\uc74c 3\uc7a5 16\uc808\u2192John 3:16 | \uc2dc\ud3b8 23\ud3b8\u2192Psalm 23\n" +
           "8. Never begin the translation with a closing quotation mark or apostrophe. Audio is split into chunks mid-speech — if the previous chunk ended mid-quote, continue naturally without any opening quote marker.\n\n" +
           "9. The church name is 'The Lord's Church' located in Iselin, New Jersey and the head pastor is 'Kim Nam Soo' and the regular pastor is 'Chun Min Sung'. If relevant, you can include them in the translation for clarity and naturalness, but they are not required to be mentioned in every segment.\n\n" +
+          "10. Dawn service should be called morning prayer.\n" +
+          "11. Don't be too sharp and acerbic. \n" +
+          "12. For any difficult to understand church vernacular add a small simple blurb in parentheses next to the word. \n" +
+          "13. Refer to audience as 'you all' or 'congregation' not 'saints' or something along the lines of 'saints' \n" +
+          "14. If there are cultural references add a small simple blurb in parentheses next to the word or reference. \n" +
           "Respond ONLY in valid JSON, no markdown:\n" +
           'For speech: {"english":"translated text","scripture":[{"ref":"John 3:16","note":""}]}\n' +
           'For music only: {"music":"description of what is playing"}';
@@ -2058,7 +2039,9 @@
             _fallbackLevel = 0;
             log("Sonnet 4.6 is back — resuming primary model.", "info");
             return result;
-          } catch (e) { lastErr = e; }
+          } catch (e) {
+            lastErr = e;
+          }
           // Every other call, also probe Sonnet 4.5
           if (_recoveryCheck % 2 === 0) {
             try {
@@ -2066,12 +2049,16 @@
               _fallbackLevel = 1;
               log("Sonnet 4.5 is back — using as fallback.", "info");
               return result;
-            } catch (e) { lastErr = e; }
+            } catch (e) {
+              lastErr = e;
+            }
           }
           // Still down — use Haiku
           try {
             return await tryModel(HAIKU_MODEL);
-          } catch (e) { throw e; }
+          } catch (e) {
+            throw e;
+          }
         }
 
         // ── While on Sonnet 4.5 fallback: probe 4.6 first ──
@@ -2081,7 +2068,9 @@
             _fallbackLevel = 0;
             log("Sonnet 4.6 is back — resuming primary model.", "info");
             return result;
-          } catch (e) { lastErr = e; }
+          } catch (e) {
+            lastErr = e;
+          }
           // Try Sonnet 4.5 (up to 2 attempts)
           for (var attempt = 1; attempt <= 2; attempt++) {
             try {
@@ -2090,7 +2079,9 @@
               lastErr = e;
               if (attempt < 2) {
                 log("Sonnet 4.5 retry...", "warn");
-                await new Promise(function (r) { setTimeout(r, 1500); });
+                await new Promise(function (r) {
+                  setTimeout(r, 1500);
+                });
               }
             }
           }
@@ -2100,7 +2091,9 @@
           log("Sonnet 4.5 overloaded — falling back to Haiku.", "warn");
           try {
             return await tryModel(HAIKU_MODEL);
-          } catch (e) { throw e; }
+          } catch (e) {
+            throw e;
+          }
         }
 
         // ── Primary path: Sonnet 4.6 (up to 2 attempts) ──
@@ -2111,7 +2104,9 @@
             lastErr = e;
             if (attempt < 2) {
               log("Retry " + attempt + "...", "warn");
-              await new Promise(function (r) { setTimeout(r, 1500 * attempt); });
+              await new Promise(function (r) {
+                setTimeout(r, 1500 * attempt);
+              });
             }
           }
         }
@@ -2126,7 +2121,9 @@
             lastErr = e;
             if (attempt < 2) {
               log("Sonnet 4.5 retry...", "warn");
-              await new Promise(function (r) { setTimeout(r, 1500); });
+              await new Promise(function (r) {
+                setTimeout(r, 1500);
+              });
             }
           }
         }
@@ -2137,7 +2134,9 @@
         log("Sonnet 4.5 overloaded — falling back to Haiku.", "warn");
         try {
           return await tryModel(HAIKU_MODEL);
-        } catch (e) { throw e; }
+        } catch (e) {
+          throw e;
+        }
       }
 
       // ════════════════════════════════════════════════════════════
@@ -2392,8 +2391,8 @@
           );
         if (lh !== null && lh !== undefined)
           document.documentElement.style.setProperty(
-            "--sentence-spacing",
-            parseInt(lh) + "px",
+            "--line-height",
+            (parseInt(lh) / 10).toFixed(1),
           );
         if (cs !== null && cs !== undefined)
           document.documentElement.style.setProperty(
@@ -2421,8 +2420,8 @@
             document.getElementById("chunk-spacing-input")
           : document.getElementById("chunk-spacing-input") ||
             document.getElementById("remote-chunk-spacing-input");
-        var fontSize = fsEl ? parseInt(fsEl.value) : 46;
-        var lineHeight = lhEl ? parseInt(lhEl.value) : 20;
+        var fontSize = fsEl ? parseInt(fsEl.value) : 83;
+        var lineHeight = lhEl ? parseInt(lhEl.value) : 15;
         var chunkSpacing = csEl ? parseInt(csEl.value) : 60;
 
         document.documentElement.style.setProperty(
@@ -2430,8 +2429,8 @@
           fontSize + "px",
         );
         document.documentElement.style.setProperty(
-          "--sentence-spacing",
-          lineHeight + "px",
+          "--line-height",
+          (lineHeight / 10).toFixed(1),
         );
         document.documentElement.style.setProperty(
           "--chunk-spacing",
@@ -2442,6 +2441,7 @@
 
       // Init CSS vars on load; block Enter inside editable sentences
       document.addEventListener("DOMContentLoaded", function () {
+        if (adminKey) log("Waiting for sermon\u2026", "info");
         document
           .getElementById("transcript")
           .addEventListener("keydown", function (e) {
