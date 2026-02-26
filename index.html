@@ -472,9 +472,9 @@
         <div class="control-group">
           <span class="control-label">Segment</span>
           <select id="chunk-ms" onchange="pushTypoSync()">
-            <option value="20000" selected>20s</option>
+            <option value="20000">20s</option>
             <option value="25000">25s</option>
-            <option value="30000">30s</option>
+            <option value="30000" selected>30s</option>
           </select>
         </div>
         <div class="control-group">
@@ -763,6 +763,14 @@
           rbtn.textContent = isMuted ? "\u25a0 Unmute" : "Mute";
           rbtn.style.color = isMuted ? "#e55" : "";
           rbtn.style.borderColor = isMuted ? "#e55" : "";
+        }
+        // Popup console mute button
+        if (consoleWindow && !consoleWindow.closed) {
+          var pbtn = consoleWindow.document.getElementById("btn-mute");
+          if (pbtn) {
+            pbtn.textContent = isMuted ? "Unmute" : "Mute";
+            pbtn.style.color = isMuted ? "#e55" : "#555";
+          }
         }
       }
 
@@ -1453,7 +1461,7 @@
 
         // Start polling
         pollRemote();
-        setInterval(pollRemote, 1500);
+        setInterval(pollRemote, 3000);
       }
 
       // ════════════════════════════════════════════════════════════
@@ -1636,7 +1644,11 @@
           "#popup-header { display:flex; align-items:center; padding:12px 20px; border-bottom:1px solid #1a1a1a; flex-shrink:0; gap:10px; }\n" +
           "#popup-header > span:first-child { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#666; }\n" +
           "#popup-controls { display:flex; align-items:center; gap:10px; padding:14px 20px; border-bottom:1px solid #1a1a1a; flex-shrink:0; flex-wrap:wrap; }\n" +
+          ".control-label { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#666; white-space:nowrap; }\n" +
           "select { background:#111; border:1px solid #2a2a2a; border-radius:4px; padding:7px 10px; color:#fff; font-family:'Inter',sans-serif; font-size:12px; outline:none; cursor:pointer; }\n" +
+          "input[type=text] { background:#111; border:1px solid #2a2a2a; border-radius:4px; padding:7px 10px; color:#fff; font-family:'Inter',sans-serif; font-size:12px; outline:none; flex:1; min-width:100px; max-width:200px; }\n" +
+          "input[type=range] { width:70px; }\n" +
+          "input[type=number] { width:56px; background:#111; border:1px solid #2a2a2a; border-radius:4px; padding:5px 8px; color:#fff; font-family:'Inter',sans-serif; font-size:12px; outline:none; }\n" +
           ".btn { padding:7px 18px; border-radius:4px; border:1px solid #2a2a2a; font-family:'Inter',sans-serif; font-size:12px; cursor:pointer; transition:all 0.15s; white-space:nowrap; background:transparent; color:#fff; }\n" +
           ".btn-start { background:#fff; color:#000; border-color:#fff; } .btn-start:hover { background:#ddd; }\n" +
           ".btn-stop { color:#e55; border-color:#e55; } .btn-stop:hover { background:rgba(220,50,50,0.08); }\n" +
@@ -1655,11 +1667,33 @@
           '<div id="popup-controls">\n' +
           '  <button class="btn btn-start" id="btn-start" onclick="window.opener.startSession()">&#9654; Begin</button>\n' +
           '  <button class="btn btn-stop"  id="btn-stop"  onclick="window.opener.stopSession()" style="display:none">&#9632; Stop</button>\n' +
+          '  <button class="btn btn-muted" id="btn-mute" onclick="window.opener.toggleMute()">Mute</button>\n' +
           '  <button class="btn btn-muted" onclick="window.opener.clearAll()">Clear</button>\n' +
           '  <button class="btn btn-muted" onclick="window.opener.downloadTranscript(\'Manual download\')">&#8595; Download</button>\n' +
-          '  <select id="chunk-ms" onchange="window.opener.document.getElementById(\'chunk-ms\').value = this.value">\n' +
-          '    <option value="20000">20s</option><option value="25000">25s</option><option value="30000">30s</option>\n' +
+          "</div>\n" +
+          '<div id="popup-controls">\n' +
+          '  <span class="control-label">Title</span>\n' +
+          '  <input type="text" id="popup-title" placeholder="Sermon title&#x2026;" oninput="window.opener.setSermonTitle(this.value)">\n' +
+          '  <span class="control-label">Segment</span>\n' +
+          '  <select id="popup-chunk-ms" onchange="syncToOpener(\'chunk-ms\',this.value); window.opener.pushTypoSync()">\n' +
+          '    <option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>\n' +
           "  </select>\n" +
+          "</div>\n" +
+          '<div id="popup-controls">\n' +
+          '  <span class="control-label">Size</span>\n' +
+          '  <input type="range" class="slider" id="popup-font-slider" min="24" max="175" value="83" oninput="syncPair(\'popup-font-input\',this.value);pushTypo(this.value,null,null)" onchange="commitTypo()" style="width:70px">\n' +
+          '  <input type="number" id="popup-font-input" min="24" max="175" value="83" oninput="syncPair(\'popup-font-slider\',this.value);pushTypo(this.value,null,null)" onchange="commitTypo()" style="width:56px">\n' +
+          '  <span class="control-label">Line</span>\n' +
+          '  <input type="range" class="slider" id="popup-lh-slider" min="10" max="40" value="15" oninput="syncPair(\'popup-lh-input\',this.value);pushTypo(null,this.value,null)" onchange="commitTypo()" style="width:70px">\n' +
+          '  <input type="number" id="popup-lh-input" min="10" max="40" value="15" oninput="syncPair(\'popup-lh-slider\',this.value);pushTypo(null,this.value,null)" onchange="commitTypo()" style="width:56px">\n' +
+          "</div>\n" +
+          '<div id="popup-controls">\n' +
+          '  <span class="control-label">Segment</span>\n' +
+          '  <input type="range" class="slider" id="popup-cs-slider" min="10" max="200" value="60" oninput="syncPair(\'popup-cs-input\',this.value);pushTypo(null,null,this.value)" onchange="commitTypo()" style="width:70px">\n' +
+          '  <input type="number" id="popup-cs-input" min="10" max="200" value="60" oninput="syncPair(\'popup-cs-slider\',this.value);pushTypo(null,null,this.value)" onchange="commitTypo()" style="width:56px">\n' +
+          '  <span class="control-label">Scroll</span>\n' +
+          '  <input type="range" class="slider" id="popup-scroll-slider" min="40" max="500" value="77" oninput="syncPair(\'popup-scroll-input\',this.value);pushScroll(this.value)" onchange="commitScroll()" style="width:70px">\n' +
+          '  <input type="number" id="popup-scroll-input" min="40" max="500" value="77" oninput="syncPair(\'popup-scroll-slider\',this.value);pushScroll(this.value)" onchange="commitScroll()" style="width:56px">\n' +
           "</div>\n" +
           '<div id="log-panel"><div id="log-entries"></div></div>\n' +
           "<script>\n" +
@@ -1682,11 +1716,43 @@
           '  el.textContent = n ? "Queue: " + n + " pending" : "";\n' +
           '  el.style.color = n > 2 ? "#e55" : "#b83";\n' +
           "}\n" +
-          "function syncState(listening, chunkMs) {\n" +
+          "// Sync a sibling slider/input pair\n" +
+          "function syncPair(id, val) { var el=document.getElementById(id); if(el) el.value=val; }\n" +
+          "// Sync a value back to the opener's input by ID\n" +
+          "function syncToOpener(id, val) {\n" +
+          "  var el=window.opener.document.getElementById(id); if(el) el.value=val;\n" +
+          "}\n" +
+          "// Live preview (oninput) — update CSS vars on main window\n" +
+          "function pushTypo(fs, lh, cs) {\n" +
+          "  window.opener.applyTypographyLocal(fs, lh, cs);\n" +
+          "  // Also sync main window inputs so applyTypography reads correct values\n" +
+          "  if(fs!==null) { syncToOpener('font-size-slider',fs); syncToOpener('font-size-input',fs); }\n" +
+          "  if(lh!==null) { syncToOpener('line-height-slider',lh); syncToOpener('line-height-input',lh); }\n" +
+          "  if(cs!==null) { syncToOpener('chunk-spacing-slider',cs); syncToOpener('chunk-spacing-input',cs); }\n" +
+          "}\n" +
+          "// Commit (onchange) — push to Redis via main window\n" +
+          "function commitTypo() { window.opener.applyTypography(); }\n" +
+          "// Live scroll speed preview\n" +
+          "function pushScroll(val) {\n" +
+          "  window.opener.scrollSpeed = parseInt(val);\n" +
+          "  window.opener._lastLocalTypoTime = Date.now();\n" +
+          "  syncToOpener('scroll-speed-slider', val);\n" +
+          "  syncToOpener('scroll-speed-input', val);\n" +
+          "}\n" +
+          "function commitScroll() { window.opener.updateScrollSpeed(); }\n" +
+          "function syncState(listening, chunkMs, muteState, titleVal, fontSize, lineHeight, chunkSpacing, scrollSpd) {\n" +
           '  document.getElementById("btn-start").style.display = listening ? "none" : "inline-block";\n' +
           '  document.getElementById("btn-stop").style.display  = listening ? "inline-block" : "none";\n' +
-          '  var sel = document.getElementById("chunk-ms");\n' +
+          '  var sel = document.getElementById("popup-chunk-ms");\n' +
           "  if (sel) sel.value = chunkMs;\n" +
+          '  var muteBtn = document.getElementById("btn-mute");\n' +
+          '  if (muteBtn) { muteBtn.textContent = muteState ? "Unmute" : "Mute"; muteBtn.style.color = muteState ? "#e55" : "#555"; }\n' +
+          '  var ti = document.getElementById("popup-title");\n' +
+          "  if (ti && titleVal !== undefined) ti.value = titleVal;\n" +
+          "  if (fontSize) { syncPair('popup-font-slider',fontSize); syncPair('popup-font-input',fontSize); }\n" +
+          "  if (lineHeight) { syncPair('popup-lh-slider',lineHeight); syncPair('popup-lh-input',lineHeight); }\n" +
+          "  if (chunkSpacing) { syncPair('popup-cs-slider',chunkSpacing); syncPair('popup-cs-input',chunkSpacing); }\n" +
+          "  if (scrollSpd) { syncPair('popup-scroll-slider',scrollSpd); syncPair('popup-scroll-input',scrollSpd); }\n" +
           "}\n" +
           'window.addEventListener("beforeunload", function() {\n' +
           "  if (window.opener && !window.opener.closed) window.opener._reattachConsole();\n" +
@@ -1720,7 +1786,17 @@
       function syncPopupState() {
         if (!consoleWindow || consoleWindow.closed) return;
         var chunkMs = document.getElementById("chunk-ms").value;
-        consoleWindow.syncState(isListening, chunkMs);
+        var titleEl = document.getElementById("sermon-title-input");
+        var titleVal = titleEl ? titleEl.value : "";
+        var fs = document.getElementById("font-size-slider");
+        var lh = document.getElementById("line-height-slider");
+        var cs = document.getElementById("chunk-spacing-slider");
+        var ss = document.getElementById("scroll-speed-slider");
+        consoleWindow.syncState(
+          isListening, chunkMs, isMuted, titleVal,
+          fs ? fs.value : null, lh ? lh.value : null,
+          cs ? cs.value : null, ss ? ss.value : null
+        );
         consoleWindow.setQueue(queue.length);
       }
 
@@ -1950,7 +2026,7 @@
       var _recoveryCheck = 0; // alternates recovery probes while on haiku
 
       async function claudeTranslate(korean) {
-        var system =
+        var systemText =
           "You are a Korean-to-English translation assistant for a live Christian church service displayed on screen.\n\n" +
           "The microphone may pick up not just the pastor speaking, but also musical instruments (piano, guitar, organ, drums, etc.), or ambient sounds.\n\n" +
           "RULES:\n" +
@@ -1971,6 +2047,11 @@
           "Respond ONLY in valid JSON, no markdown:\n" +
           'For speech: {"english":"translated text","scripture":[{"ref":"John 3:16","note":""}]}\n' +
           'For music only: {"music":"description of what is playing"}';
+
+        // Use structured system format with cache_control for prompt caching.
+        // The system prompt is identical for every call, so caching it saves ~90%
+        // of system prompt input token costs after the first call.
+        var system = [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }];
 
         var prompt = buildPrompt(korean);
 
@@ -2033,17 +2114,19 @@
         // ── While on Haiku fallback: probe higher models to recover ──
         if (_fallbackLevel === 2) {
           _recoveryCheck++;
-          // Always probe Sonnet 4.6
-          try {
-            var result = await tryModel(SONNET_MODEL);
-            _fallbackLevel = 0;
-            log("Sonnet 4.6 is back — resuming primary model.", "info");
-            return result;
-          } catch (e) {
-            lastErr = e;
+          // Probe Sonnet 4.6 every 3rd call (saves wasted API calls)
+          if (_recoveryCheck % 3 === 0) {
+            try {
+              var result = await tryModel(SONNET_MODEL);
+              _fallbackLevel = 0;
+              log("Sonnet 4.6 is back — resuming primary model.", "info");
+              return result;
+            } catch (e) {
+              lastErr = e;
+            }
           }
-          // Every other call, also probe Sonnet 4.5
-          if (_recoveryCheck % 2 === 0) {
+          // Probe Sonnet 4.5 every 6th call
+          if (_recoveryCheck % 6 === 0) {
             try {
               var result = await tryModel(SONNET_45_MODEL);
               _fallbackLevel = 1;
@@ -2053,7 +2136,7 @@
               lastErr = e;
             }
           }
-          // Still down — use Haiku
+          // Use Haiku
           try {
             return await tryModel(HAIKU_MODEL);
           } catch (e) {
@@ -2061,15 +2144,19 @@
           }
         }
 
-        // ── While on Sonnet 4.5 fallback: probe 4.6 first ──
+        // ── While on Sonnet 4.5 fallback: probe 4.6 every other call ──
         if (_fallbackLevel === 1) {
-          try {
-            var result = await tryModel(SONNET_MODEL);
-            _fallbackLevel = 0;
-            log("Sonnet 4.6 is back — resuming primary model.", "info");
-            return result;
-          } catch (e) {
-            lastErr = e;
+          _recoveryCheck++;
+          if (_recoveryCheck % 2 === 0) {
+            try {
+              var result = await tryModel(SONNET_MODEL);
+              _fallbackLevel = 0;
+              _recoveryCheck = 0;
+              log("Sonnet 4.6 is back — resuming primary model.", "info");
+              return result;
+            } catch (e) {
+              lastErr = e;
+            }
           }
           // Try Sonnet 4.5 (up to 2 attempts)
           for (var attempt = 1; attempt <= 2; attempt++) {

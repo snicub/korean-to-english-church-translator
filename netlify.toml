@@ -1,6 +1,12 @@
 [build]
   functions = "netlify/functions"
 
+[dev]
+  framework = "#static"
+
+[functions]
+  node_bundler = "esbuild"
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"

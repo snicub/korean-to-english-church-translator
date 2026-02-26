@@ -12,7 +12,19 @@ exports.handler = async (event) => {
   if (authErr) return authErr;
 
   try {
-    const { audioBase64, mimeType, ext, prompt } = JSON.parse(event.body);
+    let parsed;
+    try {
+      parsed = JSON.parse(event.body);
+    } catch (parseErr) {
+      console.error('Groq: failed to parse request body, length=', (event.body || '').length);
+      return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body — request may have been truncated' }) };
+    }
+    const { audioBase64, mimeType, ext, prompt } = parsed;
+
+    if (!audioBase64 || audioBase64.length < 100) {
+      console.error('Groq: audioBase64 missing or too short, length=', (audioBase64 || '').length);
+      return { statusCode: 400, body: JSON.stringify({ error: 'Audio data missing or truncated' }) };
+    }
 
     const audioBuffer = Buffer.from(audioBase64, 'base64');
     const boundary    = '----FormBoundary' + Math.random().toString(36).slice(2);

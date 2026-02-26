@@ -42,20 +42,21 @@ exports.handler = async (event) => {
       let transcript = raw ? JSON.parse(raw) : [];
       transcript.push(data);
       if (transcript.length > 500) transcript = transcript.slice(-500);
-      await redis('SET', 'sermon:transcript', JSON.stringify(transcript));
+      // 6-hour TTL — auto-expire old sermon data
+      await redis('SET', 'sermon:transcript', JSON.stringify(transcript), 'EX', 21600);
 
     } else if (type === 'state') {
-      await redis('SET', 'sermon:state', JSON.stringify(data));
+      await redis('SET', 'sermon:state', JSON.stringify(data), 'EX', 21600);
 
     } else if (type === 'editEntry') {
       // Store latest edit per entryId (object keyed by entryId)
       const raw = await redis('GET', 'sermon:edits');
       const edits = raw ? JSON.parse(raw) : {};
       edits[String(data.entryId)] = { id: data.id, sentences: data.sentences };
-      await redis('SET', 'sermon:edits', JSON.stringify(edits));
+      await redis('SET', 'sermon:edits', JSON.stringify(edits), 'EX', 21600);
 
     } else if (type === 'typo') {
-      await redis('SET', 'sermon:typo', JSON.stringify(data));
+      await redis('SET', 'sermon:typo', JSON.stringify(data), 'EX', 21600);
 
     } else if (type === 'clear') {
       await redisPipeline(
