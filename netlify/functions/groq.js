@@ -78,7 +78,25 @@ exports.handler = async (event) => {
       return { statusCode: response.status, body: JSON.stringify({ error: text }) };
     }
 
-    return { statusCode: 200, headers: { 'Content-Type': 'text/plain' }, body: text };
+    // Extract Groq rate-limit headers for frontend metrics dashboard
+    const rl = {};
+    for (const key of [
+      'x-ratelimit-limit-requests',
+      'x-ratelimit-remaining-requests',
+      'x-ratelimit-reset-requests',
+      'x-ratelimit-limit-tokens',
+      'x-ratelimit-remaining-tokens',
+      'x-ratelimit-reset-tokens'
+    ]) {
+      const val = response.headers.get(key);
+      if (val !== null) rl[key] = val;
+    }
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, _rateLimit: Object.keys(rl).length ? rl : undefined })
+    };
 
   } catch (err) {
     console.error('Groq fn error:', err);

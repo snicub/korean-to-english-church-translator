@@ -394,6 +394,78 @@
         color: #fff;
         margin-bottom: 8px;
       }
+
+      /* Metrics panel */
+      #metrics-panel, .metrics-panel-toggle {
+        display: none;
+        padding: 10px 20px;
+        border-bottom: 1px solid #1a1a1a;
+        flex-shrink: 0;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      #metrics-panel.open, .metrics-panel-toggle.open { display: block; }
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .metric-card {
+        background: #111;
+        border: 1px solid #2a2a2a;
+        border-radius: 6px;
+        padding: 8px 10px;
+      }
+      .metric-card h4 {
+        font-size: 10px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #666;
+        margin: 0 0 6px 0;
+        font-weight: 400;
+      }
+      .meter-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+        font-size: 10px;
+        color: #888;
+      }
+      .meter-label { width: 50px; text-align: right; flex-shrink: 0; }
+      .meter-bar {
+        flex: 1;
+        height: 6px;
+        background: #1a1a1a;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .meter-fill {
+        height: 100%;
+        border-radius: 3px;
+        transition: width 0.3s, background 0.3s;
+      }
+      .meter-fill.green { background: #3a3; }
+      .meter-fill.yellow { background: #b83; }
+      .meter-fill.red { background: #e55; }
+      .meter-value { width: 70px; font-family: monospace; font-size: 10px; }
+      .metric-detail { font-size: 10px; color: #555; margin-top: 2px; }
+
+      /* Mobile responsive — admin controls only */
+      @media (max-width: 600px) {
+        .metrics-grid { grid-template-columns: 1fr; }
+        .control-group { border-left: none; width: 100%; }
+        #console-controls { padding: 10px 12px; gap: 8px; }
+        .slider, input[type="range"] { width: 60px; }
+        input[type="number"] { width: 48px; }
+        #sermon-title-input,
+        #remote-sermon-title-input { width: 120px; }
+        .meter-label { width: 40px; }
+        .meter-value { width: 60px; }
+        #remote-panel > div { gap: 6px; padding: 0; }
+        #main { padding: 20px 16px 4vh; }
+        body::after { height: 30px; }
+      }
     </style>
   </head>
   <body>
@@ -420,6 +492,13 @@
             margin-right: 16px;
           "
         ></span>
+        <button
+          class="btn btn-muted"
+          style="padding: 4px 10px; font-size: 11px"
+          onclick="toggleMetricsPanel()"
+        >
+          Metrics
+        </button>
         <button
           class="btn btn-muted"
           style="padding: 4px 10px; font-size: 11px"
@@ -473,8 +552,8 @@
           <span class="control-label">Segment</span>
           <select id="chunk-ms" onchange="pushTypoSync()">
             <option value="20000">20s</option>
-            <option value="25000">25s</option>
-            <option value="30000" selected>30s</option>
+            <option value="25000" selected>25s</option>
+            <option value="30000">30s</option>
           </select>
         </div>
         <div class="control-group">
@@ -604,6 +683,44 @@
           >
             &#8615; Go to bottom
           </button>
+        </div>
+      </div>
+      <div id="metrics-panel">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <h4>Claude (Anthropic)</h4>
+            <div class="meter-row">
+              <span class="meter-label">Requests</span>
+              <div class="meter-bar"><div class="meter-fill green" id="claude-req-fill" style="width:0%"></div></div>
+              <span class="meter-value" id="claude-req-val">—</span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-label">Tokens</span>
+              <div class="meter-bar"><div class="meter-fill green" id="claude-tok-fill" style="width:0%"></div></div>
+              <span class="meter-value" id="claude-tok-val">—</span>
+            </div>
+            <div class="metric-detail" id="claude-reset">Reset: —</div>
+            <div class="metric-detail" id="claude-calls">Calls: 0</div>
+          </div>
+          <div class="metric-card">
+            <h4>Groq (Whisper)</h4>
+            <div class="meter-row">
+              <span class="meter-label">Requests</span>
+              <div class="meter-bar"><div class="meter-fill green" id="groq-req-fill" style="width:0%"></div></div>
+              <span class="meter-value" id="groq-req-val">—</span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-label">Tokens</span>
+              <div class="meter-bar"><div class="meter-fill green" id="groq-tok-fill" style="width:0%"></div></div>
+              <span class="meter-value" id="groq-tok-val">—</span>
+            </div>
+            <div class="metric-detail" id="groq-reset">Reset: —</div>
+            <div class="metric-detail" id="groq-calls">Calls: 0</div>
+          </div>
+          <div class="metric-card">
+            <h4>Upstash (Redis)</h4>
+            <div class="metric-detail" id="upstash-calls">Calls: 0</div>
+          </div>
         </div>
       </div>
       <div id="log-panel">
@@ -873,6 +990,117 @@
       let lastEnglishTail = ""; // tail of previous translation for continuity
 
       // ════════════════════════════════════════════════════════════
+      //  API METRICS — rate limit tracking for Claude, Groq, Upstash
+      // ════════════════════════════════════════════════════════════
+      var apiMetrics = {
+        claude: { reqLimit: 0, reqRemaining: 0, reqReset: '', tokLimit: 0, tokRemaining: 0, tokReset: '', callCount: 0 },
+        groq:   { reqLimit: 0, reqRemaining: 0, reqReset: '', tokLimit: 0, tokRemaining: 0, tokReset: '', callCount: 0 },
+        upstash: { callCount: 0 }
+      };
+      var metricsOpen = false;
+
+      function toggleMetricsPanel() {
+        metricsOpen = !metricsOpen;
+        var panel = document.getElementById('metrics-panel');
+        if (panel) panel.classList.toggle('open', metricsOpen);
+        var remotePanel = document.getElementById('remote-metrics-panel');
+        if (remotePanel) remotePanel.classList.toggle('open', metricsOpen);
+        // Sync to popup
+        if (consoleWindow && !consoleWindow.closed && consoleWindow.toggleMetricsPanel) {
+          try { consoleWindow.setMetricsOpen(metricsOpen); } catch(_) {}
+        }
+      }
+
+      function updateApiMetrics(service, rateLimit) {
+        if (!rateLimit) return;
+        var m = apiMetrics[service];
+        if (!m) return;
+        m.callCount++;
+        if (service === 'claude') {
+          m.reqLimit = parseInt(rateLimit['anthropic-ratelimit-requests-limit']) || m.reqLimit;
+          m.reqRemaining = parseInt(rateLimit['anthropic-ratelimit-requests-remaining']) || 0;
+          m.reqReset = rateLimit['anthropic-ratelimit-requests-reset'] || '';
+          m.tokLimit = parseInt(rateLimit['anthropic-ratelimit-tokens-limit']) || m.tokLimit;
+          m.tokRemaining = parseInt(rateLimit['anthropic-ratelimit-tokens-remaining']) || 0;
+          m.tokReset = rateLimit['anthropic-ratelimit-tokens-reset'] || '';
+        } else if (service === 'groq') {
+          m.reqLimit = parseInt(rateLimit['x-ratelimit-limit-requests']) || m.reqLimit;
+          m.reqRemaining = parseInt(rateLimit['x-ratelimit-remaining-requests']) || 0;
+          m.reqReset = rateLimit['x-ratelimit-reset-requests'] || '';
+          m.tokLimit = parseInt(rateLimit['x-ratelimit-limit-tokens']) || m.tokLimit;
+          m.tokRemaining = parseInt(rateLimit['x-ratelimit-remaining-tokens']) || 0;
+          m.tokReset = rateLimit['x-ratelimit-reset-tokens'] || '';
+        }
+        refreshMetricsPanel();
+        // Push state so remote device receives updated metrics
+        pushSync('state', {
+          isListening: isListening,
+          isMuted: isMuted,
+          chunkMs: parseInt((document.getElementById('chunk-ms') || {}).value || 25000)
+        });
+      }
+
+      function meterColor(pct) {
+        if (pct > 50) return 'green';
+        if (pct > 20) return 'yellow';
+        return 'red';
+      }
+
+      function formatReset(val) {
+        if (!val) return '—';
+        // Groq returns durations like "1s", "2m30s", "1h2m3s"
+        if (/^\d+[hms]/.test(val)) return val + ' remaining';
+        // Anthropic returns ISO timestamps
+        try {
+          var d = new Date(val);
+          if (isNaN(d.getTime())) return val;
+          return d.toLocaleTimeString('en-US', { hour12: false });
+        } catch(_) { return val; }
+      }
+
+      function _updateMetricEls(doc, prefix) {
+        ['claude', 'groq'].forEach(function(svc) {
+          var m = apiMetrics[svc];
+          var reqPct = m.reqLimit ? (m.reqRemaining / m.reqLimit * 100) : 0;
+          var tokPct = m.tokLimit ? (m.tokRemaining / m.tokLimit * 100) : 0;
+          var reqFill = doc.getElementById(prefix + svc + '-req-fill');
+          var tokFill = doc.getElementById(prefix + svc + '-tok-fill');
+          if (reqFill) { reqFill.style.width = reqPct + '%'; reqFill.className = 'meter-fill ' + meterColor(reqPct); }
+          if (tokFill) { tokFill.style.width = tokPct + '%'; tokFill.className = 'meter-fill ' + meterColor(tokPct); }
+          var reqVal = doc.getElementById(prefix + svc + '-req-val');
+          var tokVal = doc.getElementById(prefix + svc + '-tok-val');
+          if (reqVal) reqVal.textContent = m.reqLimit ? (m.reqRemaining + '/' + m.reqLimit) : '—';
+          if (tokVal) tokVal.textContent = m.tokLimit ? (m.tokRemaining + '/' + m.tokLimit) : '—';
+          var resetEl = doc.getElementById(prefix + svc + '-reset');
+          if (resetEl) resetEl.textContent = 'Reset: ' + formatReset(m.reqReset);
+          var callsEl = doc.getElementById(prefix + svc + '-calls');
+          if (callsEl) callsEl.textContent = 'Calls: ' + m.callCount;
+        });
+        var upEl = doc.getElementById(prefix + 'upstash-calls');
+        if (upEl) upEl.textContent = 'Calls: ' + apiMetrics.upstash.callCount;
+      }
+
+      var _metricsTimer = 0;
+      function refreshMetricsPanel(doc) {
+        // Direct call with a specific doc (popup sync) — run immediately
+        if (doc) {
+          _updateMetricEls(doc, '');
+          return;
+        }
+        // Debounce: at most once per 500ms
+        if (_metricsTimer) return;
+        _metricsTimer = setTimeout(function() {
+          _metricsTimer = 0;
+          if (!metricsOpen) return; // skip DOM work when panel is hidden
+          _updateMetricEls(document, '');
+          _updateMetricEls(document, 'r-');
+          if (consoleWindow && !consoleWindow.closed) {
+            try { _updateMetricEls(consoleWindow.document, ''); } catch(_) {}
+          }
+        }, 500);
+      }
+
+      // ════════════════════════════════════════════════════════════
       //  SERMON TITLE
       // ════════════════════════════════════════════════════════════
 
@@ -930,6 +1158,7 @@
           });
           if (!resp.ok || myVersion !== _titleTranslateVersion) return;
           var data = await resp.json();
+          updateApiMetrics('claude', data._rateLimit);
           var english = data.content
             .map(function (b) {
               return b.text || "";
@@ -1045,6 +1274,7 @@
             : document.getElementById("chunk-spacing-slider") ||
               document.getElementById("remote-chunk-spacing-slider");
           var chunkSpacing = csEl ? parseInt(csEl.value) : 60;
+          apiMetrics.upstash.callCount++;
           fetch("/api/sync-push", {
             method: "POST",
             headers: authHeaders(),
@@ -1137,6 +1367,9 @@
       // ── Laptop side ──────────────────────────────────────────────
       function pushSync(type, data) {
         if (isRemote) return;
+        apiMetrics.upstash.callCount++;
+        // Piggyback metrics onto state pushes so remote can display them
+        if (type === 'state') data.apiMetrics = apiMetrics;
         fetch("/api/sync-push", {
           method: "POST",
           headers: authHeaders(),
@@ -1149,6 +1382,7 @@
       var lastCommandId = Date.now(); // ignore stale commands from before this page load
       async function pollCommands() {
         if (isRemote) return;
+        apiMetrics.upstash.callCount++;
         try {
           var resp = await fetch(
             "/api/sync-pull?since=9999999999999&sinceEdit=" + lastEditId,
@@ -1187,6 +1421,7 @@
       var lastClearedAt = 0;
 
       async function pollRemote() {
+        apiMetrics.upstash.callCount++;
         try {
           var resp = await fetch(
             "/api/sync-pull?since=" + lastEntryId + "&sinceEdit=" + lastEditId,
@@ -1252,6 +1487,16 @@
           lastEditId = 0;
           document.getElementById("transcript").innerHTML = "";
         }
+
+        // Apply metrics from laptop
+        if (state.apiMetrics) {
+          // Preserve remote's own upstash count, take everything else from laptop
+          var localUpstash = apiMetrics.upstash.callCount;
+          apiMetrics.claude = state.apiMetrics.claude || apiMetrics.claude;
+          apiMetrics.groq = state.apiMetrics.groq || apiMetrics.groq;
+          apiMetrics.upstash.callCount = localUpstash;
+          refreshMetricsPanel();
+        }
       }
 
       async function sendCommand(command, value) {
@@ -1268,6 +1513,7 @@
 
       // Push an edit from either device — no isRemote guard
       function pushEdit(entryId, sentences) {
+        apiMetrics.upstash.callCount++;
         fetch("/api/sync-push", {
           method: "POST",
           headers: authHeaders(),
@@ -1446,7 +1692,22 @@
           '<span class="control-label">Scroll</span>' +
           '<input type="range" class="slider" id="remote-scroll-slider" min="40" max="500" value="77" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-input\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:70px">' +
           '<input type="number" id="remote-scroll-input" min="40" max="500" value="77" oninput="scrollSpeed=parseInt(this.value);_lastLocalTypoTime=Date.now();document.getElementById(\'remote-scroll-slider\').value=this.value" onchange="updateRemoteScrollSpeed(this.value)" style="width:56px">' +
+          '<button class="btn btn-muted" onclick="toggleMetricsPanel()" style="margin-left:auto">Metrics</button>' +
           "</div>" +
+          // Row 3: metrics panel (hidden by default)
+          '<div id="remote-metrics-panel" class="metrics-panel-toggle"><div class="metrics-grid">' +
+          '<div class="metric-card"><h4>Claude (Anthropic)</h4>' +
+          '<div class="meter-row"><span class="meter-label">Requests</span><div class="meter-bar"><div class="meter-fill green" id="r-claude-req-fill" style="width:0%"></div></div><span class="meter-value" id="r-claude-req-val">\u2014</span></div>' +
+          '<div class="meter-row"><span class="meter-label">Tokens</span><div class="meter-bar"><div class="meter-fill green" id="r-claude-tok-fill" style="width:0%"></div></div><span class="meter-value" id="r-claude-tok-val">\u2014</span></div>' +
+          '<div class="metric-detail" id="r-claude-reset">Reset: \u2014</div><div class="metric-detail" id="r-claude-calls">Calls: 0</div>' +
+          '</div>' +
+          '<div class="metric-card"><h4>Groq (Whisper)</h4>' +
+          '<div class="meter-row"><span class="meter-label">Requests</span><div class="meter-bar"><div class="meter-fill green" id="r-groq-req-fill" style="width:0%"></div></div><span class="meter-value" id="r-groq-req-val">\u2014</span></div>' +
+          '<div class="meter-row"><span class="meter-label">Tokens</span><div class="meter-bar"><div class="meter-fill green" id="r-groq-tok-fill" style="width:0%"></div></div><span class="meter-value" id="r-groq-tok-val">\u2014</span></div>' +
+          '<div class="metric-detail" id="r-groq-reset">Reset: \u2014</div><div class="metric-detail" id="r-groq-calls">Calls: 0</div>' +
+          '</div>' +
+          '<div class="metric-card"><h4>Upstash (Redis)</h4><div class="metric-detail" id="r-upstash-calls">Calls: 0</div></div>' +
+          '</div></div>' +
           "</div>";
         document.body.appendChild(panel);
 
@@ -1658,11 +1919,25 @@
           ".log { font-family:monospace; font-size:11px; line-height:1.8; color:#3a3; }\n" +
           ".log.err { color:#e55; } .log.warn { color:#b83; } .log.info { color:#48f; }\n" +
           "#queue-depth { font-size:10px; letter-spacing:1px; text-transform:uppercase; margin-left:auto; }\n" +
+          "#metrics-panel { display:none; padding:10px 20px; border-bottom:1px solid #1a1a1a; flex-shrink:0; max-height:200px; overflow-y:auto; }\n" +
+          "#metrics-panel.open { display:block; }\n" +
+          ".metrics-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }\n" +
+          ".metric-card { background:#111; border:1px solid #2a2a2a; border-radius:6px; padding:8px 10px; }\n" +
+          ".metric-card h4 { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#666; margin:0 0 6px 0; font-weight:400; }\n" +
+          ".meter-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:10px; color:#888; }\n" +
+          ".meter-label { width:50px; text-align:right; flex-shrink:0; }\n" +
+          ".meter-bar { flex:1; height:6px; background:#1a1a1a; border-radius:3px; overflow:hidden; }\n" +
+          ".meter-fill { height:100%; border-radius:3px; transition:width 0.3s,background 0.3s; }\n" +
+          ".meter-fill.green { background:#3a3; } .meter-fill.yellow { background:#b83; } .meter-fill.red { background:#e55; }\n" +
+          ".meter-value { width:70px; font-family:monospace; font-size:10px; }\n" +
+          ".metric-detail { font-size:10px; color:#555; margin-top:2px; }\n" +
+          "@media (max-width:600px) { .metrics-grid { grid-template-columns:1fr; } #popup-controls { padding:10px 12px; gap:8px; } input[type=range] { width:60px; } input[type=number] { width:48px; } .meter-label { width:40px; } .meter-value { width:60px; } }\n" +
           "</style></head><body>\n" +
           '<div id="popup-header">\n' +
           "  <span>Admin Console</span>\n" +
           '  <span id="queue-depth"></span>\n' +
-          '  <button class="btn btn-muted" style="padding:4px 10px;font-size:11px;margin-left:auto" onclick="reattach()">&#8601; Reattach</button>\n' +
+          '  <button class="btn btn-muted" style="padding:4px 10px;font-size:11px;margin-left:auto" onclick="toggleMetricsPanel()">Metrics</button>\n' +
+          '  <button class="btn btn-muted" style="padding:4px 10px;font-size:11px" onclick="reattach()">&#8601; Reattach</button>\n' +
           "</div>\n" +
           '<div id="popup-controls">\n' +
           '  <button class="btn btn-start" id="btn-start" onclick="window.opener.startSession()">&#9654; Begin</button>\n' +
@@ -1695,11 +1970,33 @@
           '  <input type="range" class="slider" id="popup-scroll-slider" min="40" max="500" value="77" oninput="syncPair(\'popup-scroll-input\',this.value);pushScroll(this.value)" onchange="commitScroll()" style="width:70px">\n' +
           '  <input type="number" id="popup-scroll-input" min="40" max="500" value="77" oninput="syncPair(\'popup-scroll-slider\',this.value);pushScroll(this.value)" onchange="commitScroll()" style="width:56px">\n' +
           "</div>\n" +
+          '<div id="metrics-panel"><div class="metrics-grid">\n' +
+          '  <div class="metric-card"><h4>Claude (Anthropic)</h4>\n' +
+          '    <div class="meter-row"><span class="meter-label">Requests</span><div class="meter-bar"><div class="meter-fill green" id="claude-req-fill" style="width:0%"></div></div><span class="meter-value" id="claude-req-val">&mdash;</span></div>\n' +
+          '    <div class="meter-row"><span class="meter-label">Tokens</span><div class="meter-bar"><div class="meter-fill green" id="claude-tok-fill" style="width:0%"></div></div><span class="meter-value" id="claude-tok-val">&mdash;</span></div>\n' +
+          '    <div class="metric-detail" id="claude-reset">Reset: &mdash;</div><div class="metric-detail" id="claude-calls">Calls: 0</div>\n' +
+          '  </div>\n' +
+          '  <div class="metric-card"><h4>Groq (Whisper)</h4>\n' +
+          '    <div class="meter-row"><span class="meter-label">Requests</span><div class="meter-bar"><div class="meter-fill green" id="groq-req-fill" style="width:0%"></div></div><span class="meter-value" id="groq-req-val">&mdash;</span></div>\n' +
+          '    <div class="meter-row"><span class="meter-label">Tokens</span><div class="meter-bar"><div class="meter-fill green" id="groq-tok-fill" style="width:0%"></div></div><span class="meter-value" id="groq-tok-val">&mdash;</span></div>\n' +
+          '    <div class="metric-detail" id="groq-reset">Reset: &mdash;</div><div class="metric-detail" id="groq-calls">Calls: 0</div>\n' +
+          '  </div>\n' +
+          '  <div class="metric-card"><h4>Upstash (Redis)</h4><div class="metric-detail" id="upstash-calls">Calls: 0</div></div>\n' +
+          '</div></div>\n' +
           '<div id="log-panel"><div id="log-entries"></div></div>\n' +
           "<script>\n" +
           "function reattach() {\n" +
           "  if (window.opener && !window.opener.closed) window.opener._reattachConsole();\n" +
           "  window.close();\n" +
+          "}\n" +
+          "function toggleMetricsPanel() {\n" +
+          "  if (window.opener && !window.opener.closed) { window.opener.toggleMetricsPanel(); return; }\n" +
+          '  var p = document.getElementById("metrics-panel");\n' +
+          '  if (p) p.classList.toggle("open");\n' +
+          "}\n" +
+          "function setMetricsOpen(open) {\n" +
+          '  var p = document.getElementById("metrics-panel");\n' +
+          '  if (p) p.classList.toggle("open", open);\n' +
           "}\n" +
           "function addLog(text, cls) {\n" +
           '  var wrap = document.getElementById("log-entries");\n' +
@@ -1771,12 +2068,14 @@
         consoleWindow.document.write(popupHTML);
         consoleWindow.document.close();
 
-        // Replay log history
-        logHistory.forEach(function (entry) {
-          consoleWindow.addLog(entry.text, entry.cls);
-        });
-
-        syncPopupState();
+        // Replay log history + sync state after popup is ready
+        setTimeout(function() {
+          if (!consoleWindow || consoleWindow.closed) return;
+          logHistory.forEach(function (entry) {
+            consoleWindow.addLog(entry.text, entry.cls);
+          });
+          syncPopupState();
+        }, 50);
       }
 
       function _reattachConsole() {
@@ -1793,11 +2092,21 @@
         var cs = document.getElementById("chunk-spacing-slider");
         var ss = document.getElementById("scroll-speed-slider");
         consoleWindow.syncState(
-          isListening, chunkMs, isMuted, titleVal,
-          fs ? fs.value : null, lh ? lh.value : null,
-          cs ? cs.value : null, ss ? ss.value : null
+          isListening,
+          chunkMs,
+          isMuted,
+          titleVal,
+          fs ? fs.value : null,
+          lh ? lh.value : null,
+          cs ? cs.value : null,
+          ss ? ss.value : null,
         );
         consoleWindow.setQueue(queue.length);
+        // Sync metrics state
+        try {
+          consoleWindow.setMetricsOpen(metricsOpen);
+          refreshMetricsPanel(consoleWindow.document);
+        } catch(_) {}
       }
 
       // ════════════════════════════════════════════════════════════
@@ -1978,7 +2287,9 @@
               } catch (_) {}
               throw new Error("Groq: " + msg);
             }
-            return (await resp.text()).trim();
+            var groqData = await resp.json();
+            updateApiMetrics('groq', groqData._rateLimit);
+            return (groqData.text || '').trim();
           } catch (e) {
             lastErr = e;
             if (attempt < 3) {
@@ -2051,7 +2362,13 @@
         // Use structured system format with cache_control for prompt caching.
         // The system prompt is identical for every call, so caching it saves ~90%
         // of system prompt input token costs after the first call.
-        var system = [{ type: "text", text: systemText, cache_control: { type: "ephemeral" } }];
+        var system = [
+          {
+            type: "text",
+            text: systemText,
+            cache_control: { type: "ephemeral" },
+          },
+        ];
 
         var prompt = buildPrompt(korean);
 
@@ -2094,6 +2411,7 @@
           }
 
           var data = await resp.json();
+          updateApiMetrics('claude', data._rateLimit);
           var raw = data.content
             .map(function (b) {
               return b.text || "";
@@ -2279,6 +2597,7 @@
           }
           if (resp.ok) {
             var data = await resp.json();
+            updateApiMetrics('claude', data._rateLimit);
             sermonSummary = data.content
               .map(function (b) {
                 return b.text || "";

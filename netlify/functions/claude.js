@@ -36,6 +36,21 @@ exports.handler = async (event) => {
 
     const data = await response.json();
 
+    // Extract Anthropic rate-limit headers for frontend metrics dashboard
+    const rl = {};
+    for (const key of [
+      'anthropic-ratelimit-requests-limit',
+      'anthropic-ratelimit-requests-remaining',
+      'anthropic-ratelimit-requests-reset',
+      'anthropic-ratelimit-tokens-limit',
+      'anthropic-ratelimit-tokens-remaining',
+      'anthropic-ratelimit-tokens-reset'
+    ]) {
+      const val = response.headers.get(key);
+      if (val !== null) rl[key] = val;
+    }
+    if (Object.keys(rl).length) data._rateLimit = rl;
+
     return {
       statusCode: response.status,
       headers: { 'Content-Type': 'application/json' },
