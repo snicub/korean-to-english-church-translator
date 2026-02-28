@@ -2284,23 +2284,8 @@
         return false;
       }
 
-      // Only patterns that could NEVER be real sermon content.
-      // "Thank you", "감사합니다", "아멘" are excluded — they're legitimate speech.
-      var _hallucinationPatterns = [
-        /^(thanks for watching\.?\s*)+$/i,
-        /^(please subscribe\.?\s*)+$/i,
-        /^(subtitles? by[^.]*\.?\s*)+$/i,
-        /^[\[(]?(music|upbeat music|gentle music|soft music|background music|piano music)[\])]?\.?\s*$/i,
-        /^(mbc|kbs|sbs|jtbc)[\s.]*$/i,
-      ];
-
       function isHallucination(text) {
-        var trimmed = text.trim();
-        // Check denylist first (catches short hallucinations too)
-        for (var d = 0; d < _hallucinationPatterns.length; d++) {
-          if (_hallucinationPatterns[d].test(trimmed)) return true;
-        }
-        var words = trimmed.split(/\s+/);
+        var words = text.trim().split(/\s+/);
         if (words.length < 6) return false;
         // Check for repeated bigrams
         var seen = {};
