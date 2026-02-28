@@ -2284,16 +2284,14 @@
         return false;
       }
 
-      // Known Whisper hallucination patterns on silence / low-signal audio.
+      // Only patterns that could NEVER be real sermon content.
+      // "Thank you", "감사합니다", "아멘" are excluded — they're legitimate speech.
       var _hallucinationPatterns = [
-        /^(thank you\.?\s*)+$/i,
         /^(thanks for watching\.?\s*)+$/i,
         /^(please subscribe\.?\s*)+$/i,
         /^(subtitles? by[^.]*\.?\s*)+$/i,
         /^[\[(]?(music|upbeat music|gentle music|soft music|background music|piano music)[\])]?\.?\s*$/i,
         /^(mbc|kbs|sbs|jtbc)[\s.]*$/i,
-        /^(감사합니다\.?\s*)+$/,
-        /^(아멘\.?\s*)+$/,
       ];
 
       function isHallucination(text) {
