@@ -2200,9 +2200,9 @@
         processNext();
       }
 
-      // Whisper hallucinations repeat the same phrase many times (5+ occurrences).
-      // Count every consecutive word-pair; flag if any bigram appears 3 or more times.
-      // Using a threshold of 3 prevents false positives on naturally repeated phrases
+      // Whisper hallucinations repeat the same phrase many times.
+      // Count every consecutive word-pair; flag if any bigram appears 3+ times.
+      // Threshold of 3 prevents false positives on naturally repeated phrases
       // like "the Lord" or "하나님이" which may legitimately appear twice in 30 s.
       //
       // Also detects sequential number counting hallucinations where Whisper
@@ -2284,15 +2284,32 @@
         return false;
       }
 
+      // Known Whisper hallucination patterns on silence / low-signal audio.
+      var _hallucinationPatterns = [
+        /^(thank you\.?\s*)+$/i,
+        /^(thanks for watching\.?\s*)+$/i,
+        /^(please subscribe\.?\s*)+$/i,
+        /^(subtitles? by[^.]*\.?\s*)+$/i,
+        /^[\[(]?(music|upbeat music|gentle music|soft music|background music|piano music)[\])]?\.?\s*$/i,
+        /^(mbc|kbs|sbs|jtbc)[\s.]*$/i,
+        /^(감사합니다\.?\s*)+$/,
+        /^(아멘\.?\s*)+$/,
+      ];
+
       function isHallucination(text) {
-        var words = text.trim().split(/\s+/);
+        var trimmed = text.trim();
+        // Check denylist first (catches short hallucinations too)
+        for (var d = 0; d < _hallucinationPatterns.length; d++) {
+          if (_hallucinationPatterns[d].test(trimmed)) return true;
+        }
+        var words = trimmed.split(/\s+/);
         if (words.length < 6) return false;
         // Check for repeated bigrams
         var seen = {};
         for (var i = 0; i < words.length - 1; i++) {
           var bi = words[i] + "\x00" + words[i + 1];
           seen[bi] = (seen[bi] || 0) + 1;
-          if (seen[bi] >= 5) return true;
+          if (seen[bi] >= 3) return true;
         }
         // Check for sequential number counting
         if (_hasSequentialNumbers(text)) return true;
@@ -2403,11 +2420,10 @@
           });
           p += "\n";
         }
-        if (lastEnglishTail) {
-          p +=
-            'PREVIOUS SEGMENT ENDED WITH:\n"' +
-            lastEnglishTail +
-            '"\nIf this new Korean segment completes that thought, begin your translation with the continuation (e.g. the rest of the clause or sentence) — do NOT repeat or re-introduce what was already said. If it ends mid-clause without punctuation, your translation should flow on from it naturally.\n\n';
+        // Only send tail when recentSegments is empty (otherwise it's
+        // redundant — the tail is already the end of the last segment).
+        if (lastEnglishTail && !recentSegments.length) {
+          p += 'PREVIOUS SEGMENT ENDED WITH:\n"' + lastEnglishTail + '"\n\n';
         }
         p += "NEW SEGMENT:\n" + korean;
         return p;
@@ -2438,6 +2454,7 @@
           "12. For any difficult to understand church vernacular add a small simple blurb in parentheses next to the word. \n" +
           "13. Refer to audience as 'you all' or 'congregation' not 'saints' or something along the lines of 'saints' \n" +
           "14. If there are cultural references add a small simple blurb in parentheses next to the word or reference. \n" +
+          "15. When PREVIOUS SEGMENT ENDED WITH is provided and this new segment completes that thought, begin your translation with the continuation — do NOT repeat what was already said. Flow on naturally.\n\n" +
           "Respond ONLY in valid JSON, no markdown:\n" +
           'For speech: {"english":"translated text","scripture":[{"ref":"John 3:16","note":""}]}\n' +
           'For music only: {"music":"description of what is playing"}';
@@ -2515,8 +2532,8 @@
         // ── While on Haiku fallback: probe higher models to recover ──
         if (_fallbackLevel === 2) {
           _recoveryCheck++;
-          // Probe Sonnet 4.6 every 3rd call (saves wasted API calls)
-          if (_recoveryCheck % 3 === 0) {
+          // Alternate probes: try 4.6 every 6th, try 4.5 every 3rd (but not when 4.6 is probed)
+          if (_recoveryCheck % 6 === 0) {
             try {
               var result = await tryModel(SONNET_MODEL);
               _fallbackLevel = 0;
@@ -2525,9 +2542,7 @@
             } catch (e) {
               lastErr = e;
             }
-          }
-          // Probe Sonnet 4.5 every 6th call
-          if (_recoveryCheck % 6 === 0) {
+          } else if (_recoveryCheck % 3 === 0) {
             try {
               var result = await tryModel(SONNET_45_MODEL);
               _fallbackLevel = 1;
