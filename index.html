@@ -2204,15 +2204,98 @@
       // Count every consecutive word-pair; flag if any bigram appears 3 or more times.
       // Using a threshold of 3 prevents false positives on naturally repeated phrases
       // like "the Lord" or "하나님이" which may legitimately appear twice in 30 s.
+      //
+      // Also detects sequential number counting hallucinations where Whisper
+      // generates spelled-out numbers in sequence (e.g. "twenty-six twenty-seven
+      // twenty-eight...") after hearing a number spoken in English.
+      var _numberWords = {
+        zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,
+        ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,
+        seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50,
+        sixty:60,seventy:70,eighty:80,ninety:90,hundred:100
+      };
+
+      function _parseSpelledNumber(words, start) {
+        // Parse ONE spelled-out number starting at words[start].
+        // Handles: "twenty-six" (hyphenated, 1 word), "thirty" (1 word),
+        // "one hundred" (2 words), "two hundred thirty-four" (3 words).
+        // Returns {value, consumed} or null.
+        var i = start, val = 0, got = false;
+        while (i < words.length) {
+          var w = words[i].toLowerCase().replace(/,$/,"");
+          var parts = w.split("-");
+          var partVal = 0, partOk = false;
+          for (var p = 0; p < parts.length; p++) {
+            var n = _numberWords[parts[p]];
+            if (n === undefined) break;
+            if (n === 100) { partVal = (partVal || 1) * 100; }
+            else { partVal += n; }
+            partOk = true;
+          }
+          if (!partOk || p < parts.length) break;
+          // If we already have a non-hundred value and this word adds
+          // another non-hundred value, it's a new number — stop here.
+          // e.g. val=26 and partVal=27 means "twenty-six twenty-seven" = two numbers
+          if (got && partVal !== 100 && partVal < 100 && val % 100 !== 0) break;
+          if (partVal === 100) { val = (val || 1) * 100; }
+          else { val += partVal; }
+          got = true;
+          i++;
+        }
+        return got ? { value: val, consumed: i - start } : null;
+      }
+
+      function _hasSequentialNumbers(text) {
+        var words = text.trim().split(/\s+/);
+        var consecutive = 0, lastNum = null;
+        var i = 0;
+        while (i < words.length) {
+          var parsed = _parseSpelledNumber(words, i);
+          if (parsed && parsed.value >= 0 && parsed.value <= 9999) {
+            if (lastNum !== null && parsed.value === lastNum + 1) {
+              consecutive++;
+              if (consecutive >= 3) return true; // 4+ sequential numbers
+            } else {
+              consecutive = 0;
+            }
+            lastNum = parsed.value;
+            i += parsed.consumed;
+          } else {
+            // also check for digit numbers like "26 27 28"
+            var digitMatch = words[i].match(/^(\d+)[,.]?$/);
+            if (digitMatch) {
+              var dv = parseInt(digitMatch[1], 10);
+              if (lastNum !== null && dv === lastNum + 1) {
+                consecutive++;
+                if (consecutive >= 3) return true;
+              } else {
+                consecutive = 0;
+              }
+              lastNum = dv;
+            } else {
+              // non-number word breaks the chain
+              // but allow small gaps (e.g. "twenty-six, twenty-seven, twenty-eight")
+              lastNum = null;
+              consecutive = 0;
+            }
+            i++;
+          }
+        }
+        return false;
+      }
+
       function isHallucination(text) {
         var words = text.trim().split(/\s+/);
         if (words.length < 6) return false;
+        // Check for repeated bigrams
         var seen = {};
         for (var i = 0; i < words.length - 1; i++) {
           var bi = words[i] + "\x00" + words[i + 1];
           seen[bi] = (seen[bi] || 0) + 1;
           if (seen[bi] >= 5) return true;
         }
+        // Check for sequential number counting
+        if (_hasSequentialNumbers(text)) return true;
         return false;
       }
 
