@@ -4,12 +4,14 @@ Real-time Korean sermon transcription and English translation for church service
 
 ## How it works
 
-1. Browser captures microphone audio in 30-second chunks
+1. Browser captures microphone audio in configurable chunks (20/25/30s max)
 2. Each chunk is sent to **Groq Whisper** for Korean transcription
 3. The Korean text is sent to **Claude** for natural English translation
 4. Translated sentences appear live on the display
 
-The translator handles theological vocabulary, scripture references (e.g. 요한복음 3장 16절 → John 3:16), music detection, and maintains context across segments for continuity.
+Optional **VAD (Voice Activity Detection)** can cut chunks early on speech pauses, reducing latency from ~30s to ~8-15s. Off by default — longer chunks produce higher quality translations.
+
+The translator handles theological vocabulary, scripture references (e.g. 요한복음 3장 16절 → John 3:16), music detection, hallucination filtering, and maintains context across segments via a sliding window + rolling summary.
 
 ## Stack
 
@@ -48,20 +50,30 @@ Set `GROQ_KEY` and `ANTHROPIC_KEY` in **Netlify → Site settings → Environmen
 
 ## Usage
 
+See **[SETUP.md](SETUP.md)** for a detailed walkthrough with UI instructions.
+
+Quick start:
 1. Open the app on the display computer (full-screen the browser)
-2. Click **⚙** (bottom right) to open the Admin Console
-3. Click **▶ Begin** — allow microphone access
+2. Click the gear icon (bottom right) to open the Admin Console
+3. Click **Begin** — allow microphone access
 4. Translation appears on screen as the pastor speaks
-5. Click **■ Stop** when done — transcript downloads automatically
+5. Click **Stop** when done — transcript downloads automatically
 
 ### Admin Console features
 
-- **↗** — pop the console out to a second monitor, freeing the main screen for the sermon text
-- **Segment** — chunk duration (20s / 25s / 30s); longer = better accuracy, more latency
-- **Size / Line / Chunk** — live typography controls: font size, sentence spacing, and segment gap
+- **Pop out** — pop the console out to a second monitor, freeing the main screen for the sermon text
+- **Max** — chunk duration ceiling (20s / 25s / 30s); longer = better accuracy, more latency
+- **VAD** — Voice Activity Detection; cuts chunks on speech pauses for lower latency (off by default)
+- **Size / Line / Segment** — live typography controls: font size, line spacing, and segment gap
 - **Scroll** — auto-scroll speed (teleprompter-style smooth scrolling)
-- **Clear** — wipe transcript and start fresh
-- **↓ Download** — save transcript as `.txt` at any time
+- **Clear** — pushes text off-screen (visual only; sermon context is preserved)
+- **Download** — save transcript as `.txt` at any time
+
+### Session lifecycle
+
+- **Start** — wipes all context and Redis for a clean slate, then opens mic
+- **Clear** — visual only; makes the screen black but keeps sermon context for translation continuity
+- **Stop** — tears down mic, then wipes context and Redis after 2s
 
 ### Editing the transcript
 

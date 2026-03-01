@@ -594,17 +594,22 @@
           <input
             type="text"
             id="sermon-title-input"
-            placeholder="Sermon title&hellip;"
+            placeholder="Sermon title/설교 제목&hellip;"
             oninput="setSermonTitle(this.value)"
           />
         </div>
         <div class="control-group">
-          <span class="control-label">Segment</span>
+          <span class="control-label">Max</span>
           <select id="chunk-ms" onchange="pushTypoSync()">
             <option value="20000">20s</option>
             <option value="25000" selected>25s</option>
             <option value="30000">30s</option>
           </select>
+        </div>
+        <div class="control-group">
+          <label class="control-label" style="cursor:pointer;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="vad-toggle" onchange="toggleVad()" style="margin:0;cursor:pointer"> VAD
+          </label>
         </div>
         <div class="control-group">
           <span class="control-label">Font Size</span>
@@ -817,8 +822,20 @@
       //    Pushes entries ───────► ◄─────────────── Sends commands
       //    Polls every 3s ───────► ◄─────────────── Polls every 1.5s
       //
-      //  Pipeline per 30s chunk:
+      //  Pipeline per chunk:
       //    Record audio → Groq Whisper (KO STT, ~3s) → Claude (KO→EN, ~5s) → Render
+      //
+      //  VAD (Voice Activity Detection):
+      //    - Optional energy-based silence detector (off by default, toggle in UI)
+      //    - Polls mic energy every 100ms via AudioContext AnalyserNode
+      //    - Cuts chunk early on 500ms+ silence if chunk is at least 3s old
+      //    - Reduces latency from ~30s to ~8-15s for typical speech patterns
+      //    - Falls back to max timer (20/25/30s) for continuous speech
+      //
+      //  Session lifecycle:
+      //    - Start: resetSession() wipes context + Redis, then mic + VAD init
+      //    - Clear: visual-only (pushes text off-screen, preserves context)
+      //    - Stop: mic teardown + VAD cleanup, then resetSession() after 2s
       //
       //  Key design:
       //    - Chunks queued & processed one-at-a-time to preserve sermon order
@@ -925,6 +942,59 @@
         requestAnimationFrame(function () {
           _scrollLock = false;
         });
+      }
+
+      function toggleVad() {
+        vadEnabled = document.getElementById("vad-toggle").checked;
+        var ids = ["vad-toggle", "remote-vad-toggle"];
+        for (var i = 0; i < ids.length; i++) {
+          var el = document.getElementById(ids[i]);
+          if (el) el.checked = vadEnabled;
+        }
+        if (consoleWindow && !consoleWindow.closed) {
+          var pel = consoleWindow.document.getElementById("popup-vad-toggle");
+          if (pel) pel.checked = vadEnabled;
+        }
+        if (vadEnabled && isListening) {
+          startVadPoll();
+        } else {
+          stopVadPoll();
+        }
+        log("VAD " + (vadEnabled ? "enabled" : "disabled"), "info");
+      }
+
+      function startVadPoll() {
+        stopVadPoll();
+        if (!vadEnabled || !analyser) return;
+        var buf = new Uint8Array(analyser.frequencyBinCount);
+        vadSilenceStart = 0;
+        vadPollId = setInterval(function () {
+          if (!analyser) { stopVadPoll(); return; }
+          analyser.getByteFrequencyData(buf);
+          var sum = 0;
+          for (var i = 0; i < buf.length; i++) sum += buf[i];
+          var energy = sum / buf.length;
+          if (energy < VAD_THRESHOLD) {
+            if (!vadSilenceStart) vadSilenceStart = Date.now();
+            var silenceMs = Date.now() - vadSilenceStart;
+            var chunkAge = Date.now() - vadChunkStart;
+            if (silenceMs >= VAD_SILENCE_MS && chunkAge >= VAD_MIN_CHUNK_MS) {
+              log("VAD: silence " + (silenceMs / 1000).toFixed(1) + "s — cutting chunk (" + (chunkAge / 1000).toFixed(1) + "s)", "info");
+              stopVadPoll();
+              clearTimeout(chunkTimer);
+              if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+              }
+            }
+          } else {
+            vadSilenceStart = 0;
+          }
+        }, VAD_POLL_MS);
+      }
+
+      function stopVadPoll() {
+        if (vadPollId) { clearInterval(vadPollId); vadPollId = null; }
+        vadSilenceStart = 0;
       }
 
       function toggleMute() {
@@ -1055,13 +1125,26 @@
       let logHistory = []; // last 100 log entries, replayed into popup on open
       let consoleWindow = null; // reference to detached popup window
 
-      const WINDOW_SIZE = 3; // recent segments sent as context to Claude (~60% fewer tokens than 8)
+      const WINDOW_SIZE = 8; // recent segments sent as context to Claude (more needed with shorter VAD chunks)
       const SUMMARY_EVERY = 8; // Haiku summarises every N segments
       let recentSegments = []; // sliding window of { korean, english }
       let allSegments = []; // full sermon history (for summary generation)
       let sermonSummary = ""; // rolling 3-sentence summary from Haiku
       let summarizing = false;
       let lastEnglishTail = ""; // tail of previous translation for continuity
+
+      // ── VAD (Voice Activity Detection) — cut chunks on speech pauses ──
+      const VAD_POLL_MS = 100;       // poll interval
+      const VAD_SILENCE_MS = 500;    // silence needed to trigger cut
+      const VAD_MIN_CHUNK_MS = 3000; // minimum chunk age before VAD can cut
+      const VAD_FFT_SIZE = 1024;
+      const VAD_THRESHOLD = 12;      // energy below this = silence
+      let vadEnabled = false;
+      let audioCtx = null;
+      let analyser = null;
+      let vadPollId = null;
+      let vadSilenceStart = 0;
+      let vadChunkStart = 0;
 
       // ════════════════════════════════════════════════════════════
       //  API METRICS — rate limit tracking for Claude, Groq, Upstash
@@ -1800,11 +1883,13 @@
           // Row 2: display + scroll controls
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
           '<span class="control-label">Title</span>' +
-          '<input type="text" id="remote-sermon-title-input" placeholder="Sermon title\u2026" oninput="setSermonTitle(this.value)">' +
-          '<span class="control-label" style="margin-left:6px">Segment</span>' +
+          '<input type="text" id="remote-sermon-title-input" placeholder="Sermon title/설교 제목\u2026" oninput="setSermonTitle(this.value)">' +
+          '<span class="control-label" style="margin-left:6px">Max</span>' +
           '<select id="remote-chunk-ms" style="background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:5px 8px;color:#fff;font-size:12px;cursor:pointer" onchange="sendCommand(\'setChunkMs\',this.value); pushTypoSync()">' +
           '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
           "</select>" +
+          '<label class="control-label" style="margin-left:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px">' +
+          '<input type="checkbox" id="remote-vad-toggle" onchange="toggleVad()" style="margin:0;cursor:pointer"> VAD</label>' +
           '<span class="control-label" style="margin-left:6px">Size</span>' +
           '<input type="range" class="slider" id="remote-font-slider" min="24" max="175" value="83" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-input\').value=this.value" onchange="applyTypography()" style="width:70px">' +
           '<input type="number" id="remote-font-input" min="24" max="175" value="83" oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'remote-font-slider\').value=this.value" onchange="applyTypography()" style="width:56px">' +
@@ -1862,6 +1947,21 @@
             audio: true,
           });
           log("Microphone granted.", "info");
+
+          // Set up AudioContext + AnalyserNode for VAD
+          try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === "suspended") await audioCtx.resume();
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = VAD_FFT_SIZE;
+            analyser.smoothingTimeConstant = 0.3;
+            var source = audioCtx.createMediaStreamSource(micStream);
+            source.connect(analyser);
+            log("VAD audio analyser ready.", "info");
+          } catch (ve) {
+            log("VAD init failed: " + ve.message + " — using fixed timer only", "warn");
+            analyser = null;
+          }
         } catch (e) {
           log("Mic error: " + e.message, "err");
           toast("Microphone error: " + e.message);
@@ -1889,7 +1989,8 @@
 
         var mime = bestMime();
         var ms = parseInt(document.getElementById("chunk-ms").value);
-        log("Recording " + ms / 1000 + "s...");
+        vadChunkStart = Date.now();
+        log("Recording " + ms / 1000 + "s" + (vadEnabled ? " (VAD on)" : "") + "...");
 
         try {
           mediaRecorder = mime
@@ -1930,9 +2031,12 @@
         mediaRecorder.start(500);
 
         chunkTimer = setTimeout(function () {
+          stopVadPoll();
           if (mediaRecorder && mediaRecorder.state === "recording")
             mediaRecorder.stop();
         }, ms);
+
+        if (vadEnabled) startVadPoll();
       }
 
       var _cachedMime = null;
@@ -1959,9 +2063,15 @@
       function stopSession() {
         isListening = false;
         _stoppedAt = Date.now();
+        stopVadPoll();
         clearTimeout(chunkTimer);
         if (mediaRecorder && mediaRecorder.state !== "inactive")
           mediaRecorder.stop();
+        if (audioCtx) {
+          try { audioCtx.close(); } catch (_) {}
+          audioCtx = null;
+          analyser = null;
+        }
         if (micStream) {
           micStream.getTracks().forEach(function (t) {
             t.stop();
@@ -2086,11 +2196,14 @@
           "</div>\n" +
           '<div id="popup-controls">\n' +
           '  <span class="control-label">Title</span>\n' +
-          '  <input type="text" id="popup-title" placeholder="Sermon title&#x2026;" oninput="window.opener.setSermonTitle(this.value)">\n' +
-          '  <span class="control-label">Segment</span>\n' +
+          '  <input type="text" id="popup-title" placeholder="Sermon title/설교 제목&#x2026;" oninput="window.opener.setSermonTitle(this.value)">\n' +
+          '  <span class="control-label">Max</span>\n' +
           '  <select id="popup-chunk-ms" onchange="syncToOpener(\'chunk-ms\',this.value); window.opener.pushTypoSync()">\n' +
           '    <option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>\n' +
           "  </select>\n" +
+          '  <label class="control-label" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px">\n' +
+          '    <input type="checkbox" id="popup-vad-toggle" onchange="window.opener.toggleVad()"> VAD\n' +
+          "  </label>\n" +
           "</div>\n" +
           '<div id="popup-controls">\n' +
           '  <span class="control-label">Size</span>\n' +
@@ -2427,7 +2540,7 @@
           if (parsed && parsed.value >= 0 && parsed.value <= 9999) {
             if (lastNum !== null && parsed.value === lastNum + 1) {
               consecutive++;
-              if (consecutive >= 3) return true; // 4+ sequential numbers
+              if (consecutive >= 9) return true; // 10+ sequential numbers
             } else {
               consecutive = 0;
             }
@@ -2440,7 +2553,7 @@
               var dv = parseInt(digitMatch[1], 10);
               if (lastNum !== null && dv === lastNum + 1) {
                 consecutive++;
-                if (consecutive >= 3) return true;
+                if (consecutive >= 9) return true;
               } else {
                 consecutive = 0;
               }
@@ -2596,8 +2709,8 @@
           "You are a Korean-to-English translation assistant for a live Christian church service displayed on screen.\n\n" +
           "The microphone may pick up not just the pastor speaking, but also musical instruments (piano, guitar, organ, drums, etc.), or ambient sounds.\n\n" +
           "RULES:\n" +
-          "1. If audio is not spoken korean such as instrumental or music then do not print anything. When in doubt, always translate — a missed translation is far less harmful than silently dropping real sermon content.\n" +
-          "2. If the audio contains spoken Korean sermon content (even alongside music), translate it normally.\n" +
+          "1. If audio is purely instrumental music with no speech at all, return {\"music\":\"description\"}. When in doubt, always translate — a missed translation is far less harmful than silently dropping real sermon content.\n" +
+          "2. If the audio contains spoken Korean sermon content (even alongside music), translate it normally. The pastor frequently says numbers, Bible references, and English words mid-sermon — these are legitimate speech, NOT music. A segment of numbers (e.g. verse numbers, page numbers, monetary amounts) should be translated/formatted as sermon content, not classified as music.\n" +
           "3. Translate naturally and fluently. No wooden or literal phrasing.\n" +
           "4. Use context to maintain consistent terminology and complete sentences cut off mid-thought.\n" +
           "5. Remove all filler words (um, uh, and Korean equivalents: \uc74c, \uc5b4, \uadf8, \uc774\uc81c, \uadf8\ub83c\uc11c, etc.) and stutters.\n" +

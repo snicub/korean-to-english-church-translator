@@ -5,7 +5,7 @@
 
 ## What It Does
 
-A pastor speaks in **Korean**. On average within about **18 seconds** (worst case ~30s), the English translation appears on a display screen — broken into clean, readable sentences — updated live throughout the entire service.
+A pastor speaks in **Korean**. On average within about **18 seconds** (worst case ~30s; with VAD enabled, as low as ~8s), the English translation appears on a display screen — broken into clean, readable sentences — updated live throughout the entire service.
 
 A second person can follow along and control the display from their **phone**, on the same Wi-Fi or mobile data, anywhere in the world.
 
@@ -18,8 +18,9 @@ A second person can follow along and control the display from their **phone**, o
           │
           ▼
   ┌───────────────────┐
-  │   Laptop Mic      │  Records audio in chunks (20 / 25 / 30s, configurable)
+  │   Laptop Mic      │  Records audio in chunks (20 / 25 / 30s max, configurable)
   └────────┬──────────┘
+           │  [VAD — optional: cuts chunk early on 500ms+ speech pause]
            │  [mute gate — discards chunk silently if muted]
            ▼
   ┌───────────────────┐
@@ -27,12 +28,12 @@ A second person can follow along and control the display from their **phone**, o
   │   (transcription) │  ~2–5 seconds
   └────────┬──────────┘
            │  Korean text
-           │  [hallucination filter — discards if repeated bigram detected 3+ times]
+           │  [hallucination filter — discards if repeated bigram 5+ times or 10+ sequential numbers]
            ▼
   ┌───────────────────┐
   │   Claude Sonnet   │  AI #2 — translates Korean → English
   │   (translation)   │  ~3–8 seconds
-  │                   │  Sees: last 3 segments + rolling summary + previous tail
+  │                   │  Sees: last 8 segments + rolling summary + previous tail
   └────────┬──────────┘
            │  English sentences (editable inline)
            │
@@ -79,7 +80,7 @@ A second person can follow along and control the display from their **phone**, o
 | **Why Groq?** | Groq runs Whisper at extreme speed — what normally takes 10–20 seconds is done in 2–5 seconds. Every second saved means the translation appears sooner. |
 | **Why Whisper Large v3?** | It's the most accurate publicly available speech-to-text model, especially for languages like Korean. Smaller/cheaper models make significantly more errors on Korean. |
 | **Context hint** | After the first segment, Whisper is given the previous segment's Korean text as a hint — this helps it recognise recurring theological words consistently. No hint is sent for the very first segment (sending domain keyword lists causes hallucinations on silence). |
-| **Hallucination filter** | When audio is quiet, Whisper sometimes invents repeated phrases. Any transcription where a consecutive word-pair (bigram) appears 3 or more times is automatically discarded before reaching Claude. A threshold of 3 avoids false positives on naturally repeated phrases like "the Lord" that may appear twice in real speech. |
+| **Hallucination filter** | When audio is quiet, Whisper sometimes invents repeated phrases. Any transcription where a consecutive word-pair (bigram) appears 5 or more times is automatically discarded before reaching Claude. A threshold of 5 avoids false positives on naturally repeated phrases. Additionally, sequential number counting (1, 2, 3, 4… — 10+ in a row) is flagged, as Whisper sometimes hallucinates counting sequences after hearing a number. The threshold of 10 allows pastors to count short lists without being filtered. |
 | **MIME type caching** | The browser's best supported audio format (`audio/webm;codecs=opus`, etc.) is detected once per session and cached — not re-checked on every chunk. |
 
 ---
@@ -92,7 +93,7 @@ A second person can follow along and control the display from their **phone**, o
 | **Full name** | Anthropic Claude Sonnet (latest version) |
 | **Why Claude?** | Claude produces significantly more natural-sounding English than other models on nuanced, theological Korean. It understands context, completes cut-off thoughts, and avoids robotic phrasing. |
 | **Why Sonnet (not Haiku or Opus)?** | Sonnet hits the sweet spot — Haiku is too fast/simple and produces stiffer translations; Opus costs 5× more with only marginal improvement for this task. |
-| **Context window** | Claude sees the last **3** translated segments as background context (reduced from 8 — ~60% fewer input tokens with negligible quality loss), plus a rolling sermon summary for long-term thematic consistency. It also receives the tail of the previous translation so it can continue a sentence that was cut off mid-speech by the chunk boundary. |
+| **Context window** | Claude sees the last **8** translated segments as background context, plus a rolling sermon summary for long-term thematic consistency. It also receives the tail of the previous translation so it can continue a sentence that was cut off mid-speech by the chunk boundary. The wider window (8 vs. the original 3) compensates for shorter VAD-cut chunks when VAD is enabled. |
 | **Max output tokens** | Capped at 400 (a 20-second chunk rarely produces more than ~150 tokens of English). |
 | **Special rules given to Claude** | Remove filler words (um, uh, 그, 이제…); preserve theological terms correctly; only label a segment as music if it is *purely instrumental* with no words — brief congregational responses like 아멘 are translated as speech; never start a sentence with a stray apostrophe from a chunk cut. |
 
@@ -112,30 +113,42 @@ A second person can follow along and control the display from their **phone**, o
 
 ## Timing Breakdown
 
-From the moment the pastor speaks a sentence to when it appears on screen:
+### Without VAD (default — recommended for sermons)
 
 ```
   0s ──────────────────────────────────────── ~28s
                                                   (average ~18s from speech)
-  [Recording 20s chunk ──────────]
-                                  [Whisper: 2–5s]
-                                                 [Claude: 3–8s]
-                                                               ▲
-                                                          Text appears
+  [Recording 25s chunk ──────────────]
+                                      [Whisper: 2–5s]
+                                                     [Claude: 3–8s]
+                                                                   ▲
+                                                              Text appears
 ```
 
 | Step | Typical time |
 |---|---|
-| Audio chunk recording | **20 seconds** (default; configurable: 20s / 25s / 30s) |
+| Audio chunk recording | **25 seconds** (default; configurable: 20s / 25s / 30s) |
 | Upload + Whisper transcription | 2–5 seconds |
 | Claude translation | 3–8 seconds |
-| **Worst case (speech at chunk start)** | **~28–33 seconds** |
+| **Worst case (speech at chunk start)** | **~30–33 seconds** |
 | **Average (speech mid-chunk)** | **~18 seconds** |
 | **Best case (speech at chunk end)** | **~5 seconds** |
 | Phone refresh lag (after laptop gets it) | up to 1.5 seconds |
 
-> **Why 20-second chunks?**
-> Shorter chunks (10–15s) feel faster, but very short clips often don't have enough context for Whisper to transcribe accurately — especially mid-sentence. 20 seconds is the sweet spot — enough material for clean transcription while keeping the average delay under 20 seconds. Longer options (25s / 30s) are available for situations where accuracy matters more than speed.
+### With VAD enabled (faster, lower quality)
+
+VAD (Voice Activity Detection) monitors microphone energy and cuts the recording early when the pastor pauses for 500ms+, as long as the chunk is at least 3 seconds old.
+
+| Scenario | Without VAD | With VAD |
+|---|---|---|
+| 8s speech then pause | ~30-33s | ~13-16s |
+| 15s speech then pause | ~30-33s | ~20-23s |
+| 25s+ continuous speech | ~30-33s | ~30-33s (hits max) |
+
+> **When to use VAD:** Q&A sessions, short announcements, prayer requests — situations where low latency matters more than translation polish. For regular Sunday sermons, keep VAD off. Longer chunks give Claude more context per segment, producing more natural, flowing translations.
+
+> **Why 25-second chunks (no VAD)?**
+> Shorter chunks (10–15s) feel faster, but very short clips often don't have enough context for Whisper to transcribe accurately — especially mid-sentence. 25 seconds is the sweet spot — enough material for clean transcription while keeping the average delay under 20 seconds. Longer options (30s) are available for situations where accuracy matters more than speed.
 
 ---
 
@@ -177,12 +190,22 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 
 ---
 
+## Session Lifecycle
+
+| Action | What happens |
+|---|---|
+| **Start (▶ Begin)** | Calls `resetSession()` — wipes transcript, sermon context, and Redis — then opens mic and initializes VAD audio analyser. Guarantees a clean slate each session. |
+| **Clear** | Visual only — pushes existing text off-screen with a full-viewport spacer so the display goes black. Sermon context (summary, recent segments, translation continuity) is **preserved**. Useful mid-sermon to declutter the screen without losing translation quality. |
+| **Stop (■ Stop)** | Tears down mic and VAD, flushes the queue, then calls `resetSession()` after 2 seconds (delayed to let in-flight pushes land first). Fully wipes all context and Redis. |
+
+---
+
 ## Edge Cases the System Handles
 
 | Situation | What happens |
 |---|---|
 | **Silence or no speech** | Chunks under 8 KB are automatically skipped — no blank translations |
-| **Whisper hallucination on silence** | If Whisper outputs a repeated phrase (e.g. "예수님 성경을 믿고 예수님 성경을 믿고…"), a bigram-frequency detector catches any word-pair appearing 3+ times and discards the transcription before translation |
+| **Whisper hallucination on silence** | If Whisper outputs a repeated phrase (e.g. "예수님 성경을 믿고 예수님 성경을 믿고…"), a bigram-frequency detector catches any word-pair appearing 5+ times and discards the transcription. Sequential number counting (10+ in a row) is also caught. |
 | **Music / worship singing** | Claude detects clearly instrumental audio and shows a small music label. Brief congregational responses (아멘, 할렐루야) are translated as speech, not labelled as music |
 | **Sentence cut off mid-chunk** | The tail of the previous translation is sent to Claude as context, so the next chunk continues naturally |
 | **Stray apostrophe at start** | A system rule tells Claude never to begin with `'` or `"`, and a backup cleanup strips it if Claude forgets |
@@ -234,7 +257,7 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 ├──────────────────────────────────────────────────────────────┤
 │ ▶ Begin  ■ Stop  Mute  Clear  ↓ Download                    │
 │ Title: [Sermon title input_________]                         │
-│ Segment: [30s ▾]                                             │
+│ Max: [25s ▾]  ☐ VAD                                          │
 │ Size ──●── [46]  Line ──●── [20]  Chunk ──●── [60]          │
 │ Scroll  ──●── [70]   ↓ Follow                                │
 ├──────────────────────────────────────────────────────────────┤
@@ -252,7 +275,7 @@ From the moment the pastor speaks a sentence to when it appears on screen:
 │ ● Live  ▶ Begin  ■ Stop  Mute  │
 │ Clear  ↓ Download  ↓ Follow     │
 │ Title: [___________________]    │
-│ Segment: [30s ▾]                │
+│ Max: [25s ▾]  ☐ VAD            │
 │ Size──●──[46] Line──●──[20]     │
 │ Chunk──●──[60] Scroll──●──[70] │
 ├─────────────────────────────────┤
@@ -300,7 +323,7 @@ Several design choices keep API costs low without sacrificing translation qualit
 
 | Optimization | Effect |
 |---|---|
-| **Context window: 3 segments** | Claude sees only the last 3 translated segments (not 8). This cuts ~60% of input tokens per translation call with negligible quality loss — the rolling summary fills in long-term context. |
+| **Context window: 8 segments** | Claude sees the last 8 translated segments. The wider window compensates for shorter VAD-cut chunks while the rolling summary fills in long-term context beyond the window. |
 | **Incremental summaries** | Haiku receives previous summary + latest 8 segments, not the entire sermon. Keeps summary input at ~constant size. Over a 60-min sermon, this is ~5–9× fewer Haiku tokens. |
 | **Max output tokens: 400** | A 20-second chunk rarely produces more than ~150 English tokens. Capping at 400 (instead of 1000) is safe with plenty of headroom. |
 | **Cached MIME detection** | `MediaRecorder.isTypeSupported()` is called once and cached, not every chunk. |
