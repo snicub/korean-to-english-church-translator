@@ -1676,6 +1676,8 @@
       var lastEditId = 0;
       var lastClearedAt = 0;
 
+      var _remoteSessionActive = false; // tracks whether we've seen isListening:true
+
       async function pollRemote() {
         apiMetrics.upstash.callCount++;
         try {
@@ -1689,7 +1691,25 @@
           }
           var data = await resp.json();
 
+          var isLive = data.state && data.state.isListening;
+
           if (data.state) updateRemoteState(data.state);
+
+          // First poll while not live — skip rendering stale entries, just advance cursors
+          if (!_remoteSessionActive && !isLive) {
+            (data.entries || []).forEach(function (entry) {
+              if (entry.id > lastEntryId) lastEntryId = entry.id;
+            });
+            (data.edits || []).forEach(function (edit) {
+              if (edit.id > lastEditId) lastEditId = edit.id;
+            });
+            applyTypoState(data.typo);
+            setRemoteStatus("ready");
+            return;
+          }
+
+          // Session went live — mark active
+          if (isLive) _remoteSessionActive = true;
 
           var newEntries = false;
           (data.entries || []).forEach(function (entry) {
@@ -1705,9 +1725,7 @@
           });
 
           applyTypoState(data.typo);
-          setRemoteStatus(
-            data.state && data.state.isListening ? "live" : "ready",
-          );
+          setRemoteStatus(isLive ? "live" : "ready");
         } catch (_) {
           setRemoteStatus("offline");
         }
@@ -2213,6 +2231,8 @@
               : "\u25cb Ready";
       }
 
+      var _viewerSessionActive = false; // tracks whether we've seen isListening:true
+
       async function pollViewer() {
         try {
           var resp = await fetch(
@@ -2224,7 +2244,24 @@
           }
           var data = await resp.json();
 
+          var isLive = data.state && data.state.isListening;
+
           if (data.state) updateViewerState(data.state);
+
+          // First poll while not live — skip rendering stale entries, just advance cursors
+          if (!_viewerSessionActive && !isLive) {
+            (data.entries || []).forEach(function (entry) {
+              if (entry.id > lastEntryId) lastEntryId = entry.id;
+            });
+            (data.edits || []).forEach(function (edit) {
+              if (edit.id > lastEditId) lastEditId = edit.id;
+            });
+            setViewerStatus("ready");
+            return;
+          }
+
+          // Session went live — mark active
+          if (isLive) _viewerSessionActive = true;
 
           var newEntries = false;
           (data.entries || []).forEach(function (entry) {
@@ -2239,9 +2276,7 @@
             applyEdit(edit);
           });
 
-          setViewerStatus(
-            data.state && data.state.isListening ? "live" : "ready",
-          );
+          setViewerStatus(isLive ? "live" : "ready");
         } catch (_) {
           setViewerStatus("offline");
         }
