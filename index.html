@@ -1090,7 +1090,14 @@
           '<input id="auth-input" type="password" placeholder="Enter admin key\u2026" autofocus ' +
           'style="background:#111;border:1px solid #333;border-radius:6px;padding:12px 18px;' +
           'color:#fff;font-size:16px;width:260px;text-align:center;outline:none">' +
-          '<div id="auth-error" style="color:#e55;font-size:13px;height:18px"></div>';
+          '<div id="auth-error" style="color:#e55;font-size:13px;height:18px"></div>' +
+          (_isRemotePage ? '' :
+          '<a href="?viewer" style="margin-top:24px;color:#555;font-size:13px;text-decoration:none;' +
+          'padding:10px 24px;border:1px solid #2a2a2a;border-radius:6px;transition:all 0.15s;' +
+          'letter-spacing:0.5px" ' +
+          'onmouseover="this.style.color=\'#aaa\';this.style.borderColor=\'#555\'" ' +
+          'onmouseout="this.style.color=\'#555\';this.style.borderColor=\'#2a2a2a\'">' +
+          'Viewer &rarr;</a>');
         document.body.appendChild(overlay);
 
         var input = document.getElementById("auth-input");
@@ -2101,7 +2108,7 @@
 
         // Mobile-responsive defaults — smaller text for phone screens
         var isMobile = window.innerWidth <= 600;
-        var defaultFontSize = isMobile ? 28 : 83;
+        var defaultFontSize = isMobile ? 30 : 83;
         var defaultLineHeight = isMobile ? 14 : 15;
         var defaultChunkSpacing = isMobile ? 30 : 60;
 
