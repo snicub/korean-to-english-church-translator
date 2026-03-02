@@ -496,6 +496,27 @@
         transform: translateY(0);
       }
 
+      /* Viewer panel — read-only spectator controls */
+      #viewer-panel {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #0a0a0a;
+        border-top: 1px solid #1e1e1e;
+        transform: translateY(100%);
+        transition: transform 0.25s ease;
+        z-index: 200;
+        display: flex;
+        flex-direction: column;
+        height: 200px;
+        min-height: 160px;
+        max-height: 90vh;
+      }
+      #viewer-panel.open {
+        transform: translateY(0);
+      }
+
       /* Mobile responsive */
       @media (max-width: 600px) {
         .metrics-grid {
@@ -551,6 +572,10 @@
         }
         #remote-download {
           display: none;
+        }
+        #viewer-panel {
+          height: 250px;
+          max-height: 80vh;
         }
         #main {
           padding: 20px 16px 60px;
@@ -631,6 +656,8 @@
           >
             &#8595; Download
           </button>
+          <span id="sermon-timer" style="font-size:13px;color:#666;margin-left:8px;font-variant-numeric:tabular-nums">--:--</span>
+          <span id="session-cost" style="font-size:13px;color:#666;margin-left:4px">Cost: $0.00</span>
         </div>
         <div class="control-group">
           <span class="control-label">Title</span>
@@ -648,11 +675,6 @@
             <option value="25000" selected>25s</option>
             <option value="30000">30s</option>
           </select>
-        </div>
-        <div class="control-group">
-          <label class="control-label" style="cursor:pointer;display:flex;align-items:center;gap:4px">
-            <input type="checkbox" id="vad-toggle" onchange="toggleVad()" style="margin:0;cursor:pointer"> VAD
-          </label>
         </div>
         <div class="control-group">
           <span class="control-label">Font Size</span>
@@ -868,17 +890,10 @@
       //  Pipeline per chunk:
       //    Record audio → Groq Whisper (KO STT, ~3s) → Claude (KO→EN, ~5s) → Render
       //
-      //  VAD (Voice Activity Detection):
-      //    - Optional energy-based silence detector (off by default, toggle in UI)
-      //    - Polls mic energy every 100ms via AudioContext AnalyserNode
-      //    - Cuts chunk early on 500ms+ silence if chunk is at least 3s old
-      //    - Reduces latency from ~30s to ~8-15s for typical speech patterns
-      //    - Falls back to max timer (20/25/30s) for continuous speech
-      //
       //  Session lifecycle:
-      //    - Start: resetSession() wipes context + Redis, then mic + VAD init
+      //    - Start: resetSession() wipes context + Redis, then mic init
       //    - Clear: visual-only (pushes text off-screen, preserves context)
-      //    - Stop: mic teardown + VAD cleanup, then resetSession() after 2s
+      //    - Stop: mic teardown, then resetSession() after 2s
       //
       //  Key design:
       //    - Chunks queued & processed one-at-a-time to preserve sermon order
@@ -903,14 +918,18 @@
       var _scrollSubPx = 0;
       var _lastLocalTypoTime = 0;
       var SCROLL_FILL_THRESHOLD = 0.65; // content must fill 65% of viewport to auto-scroll
+      var _viewportFillCached = false; // cached result, avoids 60fps reflow
 
       // True when transcript content is tall enough to warrant scrolling
       function _contentFillsViewport() {
+        return _viewportFillCached;
+      }
+
+      function _recheckViewportFill() {
         var transcript = document.getElementById("transcript");
         var main = document.getElementById("main");
-        return (
-          transcript.offsetHeight >= main.clientHeight * SCROLL_FILL_THRESHOLD
-        );
+        _viewportFillCached =
+          transcript.offsetHeight >= main.clientHeight * SCROLL_FILL_THRESHOLD;
       }
 
       function _scrollStep(now) {
@@ -957,6 +976,7 @@
         if (document.activeElement && document.activeElement.isContentEditable)
           return;
         if (!autoScroll) return;
+        _recheckViewportFill(); // recompute once per content change, not 60fps
         if (_scrollRAF) return; // already running
 
         _scrollLastT = performance.now();
@@ -987,66 +1007,6 @@
         });
       }
 
-      function toggleVad() {
-        vadEnabled = document.getElementById("vad-toggle").checked;
-        var ids = ["vad-toggle", "remote-vad-toggle"];
-        for (var i = 0; i < ids.length; i++) {
-          var el = document.getElementById(ids[i]);
-          if (el) el.checked = vadEnabled;
-        }
-        if (consoleWindow && !consoleWindow.closed) {
-          var pel = consoleWindow.document.getElementById("popup-vad-toggle");
-          if (pel) pel.checked = vadEnabled;
-        }
-        if (vadEnabled && isListening) {
-          startVadPoll();
-        } else {
-          stopVadPoll();
-        }
-        log("VAD " + (vadEnabled ? "enabled" : "disabled"), "info");
-        pushSync("state", {
-          isListening: isListening,
-          isMuted: isMuted,
-          vadEnabled: vadEnabled,
-          chunkMs: parseInt(
-            (document.getElementById("chunk-ms") || {}).value || 25000,
-          ),
-        });
-      }
-
-      function startVadPoll() {
-        stopVadPoll();
-        if (!vadEnabled || !analyser) return;
-        var buf = new Uint8Array(analyser.frequencyBinCount);
-        vadSilenceStart = 0;
-        vadPollId = setInterval(function () {
-          if (!analyser) { stopVadPoll(); return; }
-          analyser.getByteFrequencyData(buf);
-          var sum = 0;
-          for (var i = 0; i < buf.length; i++) sum += buf[i];
-          var energy = sum / buf.length;
-          if (energy < VAD_THRESHOLD) {
-            if (!vadSilenceStart) vadSilenceStart = Date.now();
-            var silenceMs = Date.now() - vadSilenceStart;
-            var chunkAge = Date.now() - vadChunkStart;
-            if (silenceMs >= VAD_SILENCE_MS && chunkAge >= VAD_MIN_CHUNK_MS) {
-              log("VAD: silence " + (silenceMs / 1000).toFixed(1) + "s — cutting chunk (" + (chunkAge / 1000).toFixed(1) + "s)", "info");
-              stopVadPoll();
-              clearTimeout(chunkTimer);
-              if (mediaRecorder && mediaRecorder.state === "recording") {
-                mediaRecorder.stop();
-              }
-            }
-          } else {
-            vadSilenceStart = 0;
-          }
-        }, VAD_POLL_MS);
-      }
-
-      function stopVadPoll() {
-        if (vadPollId) { clearInterval(vadPollId); vadPollId = null; }
-        vadSilenceStart = 0;
-      }
 
       function toggleMute() {
         isMuted = !isMuted;
@@ -1058,7 +1018,6 @@
         pushSync("state", {
           isListening: isListening,
           isMuted: isMuted,
-          vadEnabled: vadEnabled,
           chunkMs: parseInt(document.getElementById("chunk-ms").value),
         });
       }
@@ -1092,6 +1051,8 @@
         if (btn) btn.style.display = autoScroll ? "none" : "inline-block";
         var rbtn = document.getElementById("remote-follow");
         if (rbtn) rbtn.style.display = autoScroll ? "none" : "inline-block";
+        var vbtn = document.getElementById("viewer-follow");
+        if (vbtn) vbtn.style.display = autoScroll ? "none" : "inline-block";
       }
 
       function updateScrollSpeed() {
@@ -1121,22 +1082,15 @@
           "position:fixed;inset:0;z-index:9999;background:#000;" +
             "display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;",
         );
-        var _isRemotePage = location.search.indexOf("remote") !== -1;
+        var _isRemotePage = isRemote || isViewer;
         overlay.innerHTML =
           '<div style="color:#888;font-size:14px;letter-spacing:1px;margin-bottom:8px">' +
-          (_isRemotePage ? 'SERMON TRANSLATOR REMOTE CONTROLS' : 'THE LORD\'S CHURCH SERMON TRANSLATOR') +
+          (isViewer ? 'SERMON VIEWER' : isRemote ? 'SERMON TRANSLATOR REMOTE CONTROLS' : 'THE LORD\'S CHURCH SERMON TRANSLATOR') +
           '</div>' +
           '<input id="auth-input" type="password" placeholder="Enter admin key\u2026" autofocus ' +
           'style="background:#111;border:1px solid #333;border-radius:6px;padding:12px 18px;' +
           'color:#fff;font-size:16px;width:260px;text-align:center;outline:none">' +
-          '<div id="auth-error" style="color:#e55;font-size:13px;height:18px"></div>' +
-          (_isRemotePage ? '' :
-          '<a href="?remote" style="margin-top:24px;color:#555;font-size:13px;text-decoration:none;' +
-          'padding:10px 24px;border:1px solid #2a2a2a;border-radius:6px;transition:all 0.15s;' +
-          'letter-spacing:0.5px" ' +
-          'onmouseover="this.style.color=\'#aaa\';this.style.borderColor=\'#555\'" ' +
-          'onmouseout="this.style.color=\'#555\';this.style.borderColor=\'#2a2a2a\'">' +
-          'Control remotely &rarr;</a>');
+          '<div id="auth-error" style="color:#e55;font-size:13px;height:18px"></div>';
         document.body.appendChild(overlay);
 
         var input = document.getElementById("auth-input");
@@ -1167,12 +1121,14 @@
         });
       }
 
+      var isViewer = location.search.indexOf("viewer") !== -1;
+      var isRemote = !isViewer && location.search.indexOf("remote") !== -1;
+
       // Gate everything behind auth — if no stored key, show prompt
-      if (!adminKey) {
+      // Viewer is public (read-only, no auth needed)
+      if (!adminKey && !isViewer) {
         document.addEventListener("DOMContentLoaded", showAuthGate);
       }
-
-      var isRemote = location.search.indexOf("remote") !== -1; // ?remote in URL = phone view
       var sermonTitle = "";
       var isMuted = false; // when true, audio chunks are discarded before Groq
 
@@ -1187,7 +1143,7 @@
       let logHistory = []; // last 100 log entries, replayed into popup on open
       let consoleWindow = null; // reference to detached popup window
 
-      const WINDOW_SIZE = 8; // recent segments sent as context to Claude (more needed with shorter VAD chunks)
+      const WINDOW_SIZE = 5; // recent segments sent as context to Claude
       const SUMMARY_EVERY = 8; // Haiku summarises every N segments
       let recentSegments = []; // sliding window of { korean, english }
       let allSegments = []; // full sermon history (for summary generation)
@@ -1195,18 +1151,6 @@
       let summarizing = false;
       let lastEnglishTail = ""; // tail of previous translation for continuity
 
-      // ── VAD (Voice Activity Detection) — cut chunks on speech pauses ──
-      const VAD_POLL_MS = 100;       // poll interval
-      const VAD_SILENCE_MS = 500;    // silence needed to trigger cut
-      const VAD_MIN_CHUNK_MS = 3000; // minimum chunk age before VAD can cut
-      const VAD_FFT_SIZE = 1024;
-      const VAD_THRESHOLD = 12;      // energy below this = silence
-      let vadEnabled = false;
-      let audioCtx = null;
-      let analyser = null;
-      let vadPollId = null;
-      let vadSilenceStart = 0;
-      let vadChunkStart = 0;
 
       // ════════════════════════════════════════════════════════════
       //  API METRICS — rate limit tracking for Claude, Groq, Upstash
@@ -1233,6 +1177,38 @@
         upstash: { callCount: 0 },
       };
       var metricsOpen = false;
+      var sessionCost = 0; // running Claude cost in dollars for this session
+      var _sessionStartTime = 0; // epoch ms when Start was pressed
+      var _sermonTimerInterval = null;
+
+      // Cost per million tokens (USD) by model
+      var MODEL_PRICING = {
+        "claude-sonnet-4-20250514": { input: 3.0, cachedInput: 0.30, output: 15.0 },
+        "claude-haiku-4-5-20251001": { input: 0.80, cachedInput: 0.08, output: 4.0 },
+      };
+
+      function accumulateCost(model, usage) {
+        if (!usage) return;
+        var pricing = MODEL_PRICING[model];
+        if (!pricing) return;
+        var inputTokens = (usage.input_tokens || 0) - (usage.cache_read_input_tokens || 0) - (usage.cache_creation_input_tokens || 0);
+        var cachedTokens = (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+        var outputTokens = usage.output_tokens || 0;
+        sessionCost += (inputTokens / 1e6) * pricing.input
+                     + (cachedTokens / 1e6) * pricing.cachedInput
+                     + (outputTokens / 1e6) * pricing.output;
+        refreshMetricsPanel();
+      }
+
+      function formatSermonTimer() {
+        if (!_sessionStartTime) return "--:--";
+        var elapsed = Math.floor((Date.now() - _sessionStartTime) / 1000);
+        var h = Math.floor(elapsed / 3600);
+        var m = Math.floor((elapsed % 3600) / 60);
+        var s = elapsed % 60;
+        if (h > 0) return h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+        return m + ":" + String(s).padStart(2, "0");
+      }
 
       function toggleMetricsPanel() {
         metricsOpen = !metricsOpen;
@@ -1346,6 +1322,10 @@
         });
         var upEl = doc.getElementById(prefix + "upstash-calls");
         if (upEl) upEl.textContent = "Calls: " + apiMetrics.upstash.callCount;
+        var costEl = doc.getElementById(prefix + "session-cost");
+        if (costEl) costEl.textContent = "Cost: $" + sessionCost.toFixed(2);
+        var timerEl = doc.getElementById(prefix + "sermon-timer");
+        if (timerEl) timerEl.textContent = formatSermonTimer();
       }
 
       var _metricsTimer = 0;
@@ -1418,7 +1398,7 @@
             method: "POST",
             headers: authHeaders(),
             body: JSON.stringify({
-              model: "claude-sonnet-4-20250514",
+              model: HAIKU_MODEL,
               max_tokens: 100,
               temperature: 0,
               system:
@@ -1429,6 +1409,7 @@
           if (!resp.ok || myVersion !== _titleTranslateVersion) return;
           var data = await resp.json();
           updateApiMetrics("claude", data._rateLimit);
+          accumulateCost(HAIKU_MODEL, data.usage);
           var english = data.content
             .map(function (b) {
               return b.text || "";
@@ -1636,11 +1617,13 @@
 
       // ── Laptop side ──────────────────────────────────────────────
       function pushSync(type, data) {
-        if (isRemote) return;
+        if (isRemote || isViewer) return;
         apiMetrics.upstash.callCount++;
         // Piggyback metrics + recent logs onto state pushes
         if (type === "state") {
           data.apiMetrics = apiMetrics;
+          data.sessionCost = sessionCost;
+          data.sessionStartTime = _sessionStartTime;
           data.logTail = logHistory.slice(-30);
         }
         fetch("/api/sync-push", {
@@ -1676,14 +1659,6 @@
             else if (cmd.command === "setChunkMs" && cmd.value) {
               var sel = document.getElementById("chunk-ms");
               if (sel) sel.value = cmd.value;
-            }
-            else if (cmd.command === "vadOn" && !vadEnabled) {
-              document.getElementById("vad-toggle").checked = true;
-              toggleVad();
-            }
-            else if (cmd.command === "vadOff" && vadEnabled) {
-              document.getElementById("vad-toggle").checked = false;
-              toggleVad();
             }
           }
 
@@ -1760,12 +1735,6 @@
           isMuted = state.isMuted;
           updateMuteBtn();
         }
-        if (state.vadEnabled !== undefined) {
-          vadEnabled = state.vadEnabled;
-          var vadEl = document.getElementById("remote-vad-toggle");
-          if (vadEl) vadEl.checked = vadEnabled;
-        }
-
         // Laptop called resetSession (on stop/start) — wipe phone DOM too
         if (state.clearedAt && state.clearedAt > lastClearedAt) {
           lastClearedAt = state.clearedAt;
@@ -1797,6 +1766,8 @@
           apiMetrics.claude = state.apiMetrics.claude || apiMetrics.claude;
           apiMetrics.groq = state.apiMetrics.groq || apiMetrics.groq;
           apiMetrics.upstash.callCount = localUpstash;
+          if (state.sessionCost !== undefined) sessionCost = state.sessionCost;
+          if (state.sessionStartTime !== undefined) _sessionStartTime = state.sessionStartTime;
           refreshMetricsPanel();
         }
       }
@@ -2003,23 +1974,20 @@
             '<button class="btn btn-muted" id="remote-mute" onclick="sendCommand(isMuted?\'unmute\':\'mute\')">Mute</button>' +
             '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
             '<button class="btn btn-muted" id="remote-download" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
+            '<span id="r-sermon-timer" style="font-size:13px;color:#666;margin-left:8px;font-variant-numeric:tabular-nums">--:--</span>' +
+            '<span id="r-session-cost" style="font-size:13px;color:#666;margin-left:4px">Cost: $0.00</span>' +
           '</div>' +
           // Group 2: title
           '<div class="control-group">' +
             '<span class="control-label">Title</span>' +
             '<input type="text" id="remote-sermon-title-input" placeholder="Sermon title/&#xC124;&#xAD50; &#xC81C;&#xBAA9;&#x2026;" oninput="setSermonTitle(this.value)">' +
           '</div>' +
-          // Group 3: max + VAD
+          // Group 3: max chunk length
           '<div class="control-group">' +
             '<span class="control-label">Max</span>' +
             '<select id="remote-chunk-ms" onchange="sendCommand(\'setChunkMs\',this.value); pushTypoSync()">' +
               '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
             '</select>' +
-          '</div>' +
-          '<div class="control-group">' +
-            '<label class="control-label" style="cursor:pointer;display:flex;align-items:center;gap:4px">' +
-              '<input type="checkbox" id="remote-vad-toggle" onchange="sendCommand(this.checked?\'vadOn\':\'vadOff\')" style="margin:0;cursor:pointer"> VAD' +
-            '</label>' +
           '</div>' +
           // Group 4: Font Size
           '<div class="control-group">' +
@@ -2088,6 +2056,244 @@
         // Start polling
         pollRemote();
         setInterval(pollRemote, 3000);
+        // Tick sermon timer on remote
+        setInterval(function () {
+          var el = document.getElementById("r-sermon-timer");
+          if (el && _sessionStartTime) el.textContent = formatSermonTimer();
+        }, 1000);
+      }
+
+      // ════════════════════════════════════════════════════════════
+      //  VIEWER — read-only spectator view (?viewer)
+      //  Shows live transcript with local-only display controls.
+      //  No editing, no admin commands, no Redis writes.
+      // ════════════════════════════════════════════════════════════
+      var viewerPanelOpen = false;
+
+      function toggleViewerPanel() {
+        viewerPanelOpen = !viewerPanelOpen;
+        var panel = document.getElementById("viewer-panel");
+        if (panel) panel.classList.toggle("open", viewerPanelOpen);
+      }
+
+      function initViewer() {
+        // Hide laptop-only chrome
+        document.getElementById("console-btn").style.display = "none";
+        document.getElementById("console-drawer").style.display = "none";
+
+        // Mobile-responsive defaults — smaller text for phone screens
+        var isMobile = window.innerWidth <= 600;
+        var defaultFontSize = isMobile ? 28 : 83;
+        var defaultLineHeight = isMobile ? 14 : 15;
+        var defaultChunkSpacing = isMobile ? 30 : 60;
+
+        // Set default typography
+        document.documentElement.style.setProperty("--sentence-size", defaultFontSize + "px");
+        document.documentElement.style.setProperty("--line-height", (defaultLineHeight / 10).toFixed(1));
+        document.documentElement.style.setProperty("--chunk-spacing", defaultChunkSpacing + "px");
+
+        // Tighter padding on mobile
+        if (isMobile) {
+          document.getElementById("main").style.padding = "16px 12px 60px";
+        }
+
+        // Gear toggle button — bottom-right
+        var togBtn = document.createElement("button");
+        togBtn.id = "viewer-console-btn";
+        togBtn.title = "Viewer Controls";
+        togBtn.innerHTML = "&#9881;";
+        togBtn.setAttribute(
+          "style",
+          "position:fixed;bottom:20px;right:22px;z-index:300;" +
+            "background:none;border:none;" +
+            "color:#666;font-size:22px;cursor:pointer;padding:6px;line-height:1;" +
+            "transition:color 0.2s;",
+        );
+        togBtn.addEventListener("mouseenter", function () { togBtn.style.color = "#aaa"; });
+        togBtn.addEventListener("mouseleave", function () { togBtn.style.color = "#666"; });
+        togBtn.addEventListener("click", toggleViewerPanel);
+        document.body.appendChild(togBtn);
+
+        // Viewer panel
+        var panel = document.createElement("div");
+        panel.id = "viewer-panel";
+
+        // Resize handle
+        var resizeHandle = document.createElement("div");
+        resizeHandle.style.cssText = "height:8px;cursor:ns-resize;background:transparent;border-bottom:1px solid #1a1a1a;flex-shrink:0;display:flex;align-items:center;justify-content:center";
+        resizeHandle.innerHTML = '<div style="width:36px;height:2px;background:#333;border-radius:2px;margin-top:1px"></div>';
+
+        // Drag-to-resize
+        (function () {
+          var startY, startH;
+          resizeHandle.addEventListener("mousedown", function (e) {
+            startY = e.clientY; startH = panel.offsetHeight;
+            e.preventDefault();
+            function onMove(ev) { var h = startH - (ev.clientY - startY); panel.style.height = Math.max(160, Math.min(h, window.innerHeight * 0.9)) + "px"; }
+            function onUp() { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
+            document.addEventListener("mousemove", onMove);
+            document.addEventListener("mouseup", onUp);
+          });
+          resizeHandle.addEventListener("touchstart", function (e) {
+            startY = e.touches[0].clientY; startH = panel.offsetHeight;
+            function onMove(ev) { ev.preventDefault(); var h = startH - (ev.touches[0].clientY - startY); panel.style.height = Math.max(160, Math.min(h, window.innerHeight * 0.9)) + "px"; }
+            function onEnd() { document.removeEventListener("touchmove", onMove); document.removeEventListener("touchend", onEnd); }
+            document.addEventListener("touchmove", onMove, { passive: false });
+            document.addEventListener("touchend", onEnd);
+          }, { passive: true });
+        })();
+
+        panel.appendChild(resizeHandle);
+
+        // Header
+        var header = document.createElement("div");
+        header.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid #1a1a1a;flex-shrink:0";
+        header.innerHTML =
+          '<span style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#666">Viewer Controls</span>' +
+          '<span id="viewer-status" class="remote-status offline" style="margin-left:auto;margin-right:16px">&#9675; Connecting&#x2026;</span>' +
+          '<button class="btn btn-muted" style="padding:6px 14px;font-size:13px" onclick="toggleViewerPanel()">Close</button>';
+        panel.appendChild(header);
+
+        // Controls — typography only
+        var controls = document.createElement("div");
+        controls.id = "viewer-console-controls";
+        controls.style.cssText = "display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #1a1a1a;flex-shrink:0;flex-wrap:wrap";
+        controls.innerHTML =
+          // Font Size
+          '<div class="control-group">' +
+            '<span class="control-label">Font Size</span>' +
+            '<input type="range" class="slider" id="viewer-font-slider" min="16" max="175" value="' + defaultFontSize + '" ' +
+              'oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'viewer-font-input\').value=this.value">' +
+            '<input type="number" id="viewer-font-input" min="16" max="175" value="' + defaultFontSize + '" ' +
+              'oninput="applyTypographyLocal(this.value,null,null);document.getElementById(\'viewer-font-slider\').value=this.value">' +
+          '</div>' +
+          // Line spacing
+          '<div class="control-group">' +
+            '<span class="control-label">Line spacing</span>' +
+            '<input type="range" class="slider" id="viewer-spacing-slider" min="10" max="40" value="' + defaultLineHeight + '" ' +
+              'oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'viewer-spacing-input\').value=this.value">' +
+            '<input type="number" id="viewer-spacing-input" min="10" max="40" value="' + defaultLineHeight + '" ' +
+              'oninput="applyTypographyLocal(null,this.value,null);document.getElementById(\'viewer-spacing-slider\').value=this.value">' +
+          '</div>' +
+          // Segment spacing
+          '<div class="control-group">' +
+            '<span class="control-label">Segment spacing</span>' +
+            '<input type="range" class="slider" id="viewer-chunk-spacing-slider" min="10" max="200" value="' + defaultChunkSpacing + '" ' +
+              'oninput="applyTypographyLocal(null,null,this.value);document.getElementById(\'viewer-chunk-spacing-input\').value=this.value">' +
+            '<input type="number" id="viewer-chunk-spacing-input" min="10" max="200" value="' + defaultChunkSpacing + '" ' +
+              'oninput="applyTypographyLocal(null,null,this.value);document.getElementById(\'viewer-chunk-spacing-slider\').value=this.value">' +
+          '</div>' +
+          // Scroll Speed
+          '<div class="control-group">' +
+            '<span class="control-label">Scroll Speed</span>' +
+            '<input type="range" class="slider" id="viewer-scroll-slider" min="40" max="500" value="77" ' +
+              'oninput="scrollSpeed=parseInt(this.value);document.getElementById(\'viewer-scroll-input\').value=this.value">' +
+            '<input type="number" id="viewer-scroll-input" min="40" max="500" value="77" ' +
+              'oninput="scrollSpeed=parseInt(this.value);document.getElementById(\'viewer-scroll-slider\').value=this.value">' +
+            '<button class="btn btn-muted" id="viewer-follow" onclick="resumeAutoScroll()" style="display:none;padding:6px 14px;font-size:13px;margin-left:4px">&#8615; Go to bottom</button>' +
+          '</div>';
+        panel.appendChild(controls);
+
+        document.body.appendChild(panel);
+
+        // Start polling
+        pollViewer();
+        setInterval(pollViewer, 3000);
+      }
+
+      function setViewerStatus(status) {
+        var el = document.getElementById("viewer-status");
+        if (!el) return;
+        el.className = "remote-status " + status;
+        el.textContent =
+          status === "live"
+            ? "\u25cf Live"
+            : status === "offline"
+              ? "\u25cb Offline"
+              : "\u25cb Ready";
+      }
+
+      async function pollViewer() {
+        try {
+          var resp = await fetch(
+            "/api/sync-pull?since=" + lastEntryId + "&sinceEdit=" + lastEditId,
+          );
+          if (!resp.ok) {
+            setViewerStatus("offline");
+            return;
+          }
+          var data = await resp.json();
+
+          if (data.state) updateViewerState(data.state);
+
+          var newEntries = false;
+          (data.entries || []).forEach(function (entry) {
+            if (entry.id > lastEntryId) lastEntryId = entry.id;
+            renderViewerEntry(entry);
+            newEntries = true;
+          });
+          if (newEntries) scrollToBottom();
+
+          (data.edits || []).forEach(function (edit) {
+            if (edit.id > lastEditId) lastEditId = edit.id;
+            applyEdit(edit);
+          });
+
+          setViewerStatus(
+            data.state && data.state.isListening ? "live" : "ready",
+          );
+        } catch (_) {
+          setViewerStatus("offline");
+        }
+      }
+
+      function renderViewerEntry(entry) {
+        if (
+          entry.id &&
+          document.querySelector('[data-entry-id="' + entry.id + '"]')
+        )
+          return;
+        var wrap = document.getElementById("transcript");
+
+        if (entry.type === "music") {
+          var label = document.createElement("div");
+          label.className = "music-label";
+          label.textContent = entry.description;
+          wrap.appendChild(label);
+        } else {
+          var div = document.createElement("div");
+          div.className = "entry";
+          div.dataset.entryId = String(entry.id);
+          var html = (entry.sentences || [])
+            .map(function (s) {
+              return '<span class="sentence">' + esc(s) + "</span>";
+            })
+            .join("");
+          if (entry.scripture && entry.scripture.length) {
+            html += entry.scripture
+              .filter(function (sc) { return sc.ref; })
+              .map(function (sc) {
+                return (
+                  '<span class="scripture-callout">(' +
+                  esc(sc.ref) +
+                  (sc.note ? " \u2014 " + esc(sc.note) : "") +
+                  ")</span>"
+                );
+              })
+              .join("");
+          }
+          div.innerHTML = html;
+          wrap.appendChild(div);
+        }
+      }
+
+      function updateViewerState(state) {
+        if (state.clearedAt && state.clearedAt > lastClearedAt) {
+          lastClearedAt = state.clearedAt;
+          lastEntryId = 0;
+          lastEditId = 0;
+          document.getElementById("transcript").innerHTML = "";
+        }
       }
 
       // ════════════════════════════════════════════════════════════
@@ -2102,21 +2308,6 @@
             audio: true,
           });
           log("Microphone granted.", "info");
-
-          // Set up AudioContext + AnalyserNode for VAD
-          try {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === "suspended") await audioCtx.resume();
-            analyser = audioCtx.createAnalyser();
-            analyser.fftSize = VAD_FFT_SIZE;
-            analyser.smoothingTimeConstant = 0.3;
-            var source = audioCtx.createMediaStreamSource(micStream);
-            source.connect(analyser);
-            log("VAD audio analyser ready.", "info");
-          } catch (ve) {
-            log("VAD init failed: " + ve.message + " — using fixed timer only", "warn");
-            analyser = null;
-          }
         } catch (e) {
           log("Mic error: " + e.message, "err");
           toast("Microphone error: " + e.message);
@@ -2135,7 +2326,34 @@
           "Remote: " + location.origin + location.pathname + "?remote",
           "info",
         );
+        // Enter fullscreen
+        if (!isRemote && document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(function () {});
+        }
+
+        // Start sermon timer
+        _sessionStartTime = Date.now();
+        _sermonTimerInterval = setInterval(function () {
+          updateSermonTimer();
+        }, 1000);
+        updateSermonTimer();
+
         recordChunk();
+      }
+
+      function updateSermonTimer() {
+        var txt = formatSermonTimer();
+        var ids = ["sermon-timer", "r-sermon-timer"];
+        for (var i = 0; i < ids.length; i++) {
+          var el = document.getElementById(ids[i]);
+          if (el) el.textContent = txt;
+        }
+        if (consoleWindow && !consoleWindow.closed) {
+          try {
+            var pel = consoleWindow.document.getElementById("sermon-timer");
+            if (pel) pel.textContent = txt;
+          } catch (_) {}
+        }
       }
 
       function recordChunk() {
@@ -2144,8 +2362,7 @@
 
         var mime = bestMime();
         var ms = parseInt(document.getElementById("chunk-ms").value);
-        vadChunkStart = Date.now();
-        log("Recording " + ms / 1000 + "s" + (vadEnabled ? " (VAD on)" : "") + "...");
+        log("Recording " + ms / 1000 + "s...");
 
         try {
           mediaRecorder = mime
@@ -2186,12 +2403,9 @@
         mediaRecorder.start(500);
 
         chunkTimer = setTimeout(function () {
-          stopVadPoll();
           if (mediaRecorder && mediaRecorder.state === "recording")
             mediaRecorder.stop();
         }, ms);
-
-        if (vadEnabled) startVadPoll();
       }
 
       var _cachedMime = null;
@@ -2218,15 +2432,18 @@
       function stopSession() {
         isListening = false;
         _stoppedAt = Date.now();
-        stopVadPoll();
+        if (_sermonTimerInterval) {
+          clearInterval(_sermonTimerInterval);
+          _sermonTimerInterval = null;
+        }
+        updateSermonTimer(); // freeze final time
         clearTimeout(chunkTimer);
+        if (_activeClaudeController) {
+          _activeClaudeController.abort();
+          _activeClaudeController = null;
+        }
         if (mediaRecorder && mediaRecorder.state !== "inactive")
           mediaRecorder.stop();
-        if (audioCtx) {
-          try { audioCtx.close(); } catch (_) {}
-          audioCtx = null;
-          analyser = null;
-        }
         if (micStream) {
           micStream.getTracks().forEach(function (t) {
             t.stop();
@@ -2238,9 +2455,15 @@
         queue = [];
         updateQueueDepth();
 
+        // Exit fullscreen
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(function () {});
+        }
+
         document.getElementById("btn-start").style.display = "inline-block";
         document.getElementById("btn-stop").style.display = "none";
         log("Stopped.");
+        if (!isRemote) downloadTranscript("Auto-save on stop");
         syncPopupState();
 
         // Full reset: wipe context + Redis after a short delay so any
@@ -2261,6 +2484,7 @@
           var main = document.getElementById("main");
           if (main) main.scrollTop = main.scrollHeight;
         }
+        applySermonTitle("");
         log("Screen cleared (context preserved).", "info");
       }
 
@@ -2272,6 +2496,7 @@
         allSegments = [];
         sermonSummary = "";
         lastEnglishTail = "";
+        sessionCost = 0;
         if (consoleWindow && !consoleWindow.closed) {
           consoleWindow.document.getElementById("log-entries").innerHTML = "";
         }
@@ -2324,7 +2549,7 @@
           "#queue-depth { font-size:12px; letter-spacing:1px; text-transform:uppercase; margin-left:auto; }\n" +
           "#metrics-panel { display:none; padding:10px 20px; border-bottom:1px solid #1a1a1a; flex-shrink:0; max-height:200px; overflow-y:auto; }\n" +
           "#metrics-panel.open { display:block; }\n" +
-          ".metrics-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }\n" +
+          ".metrics-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }\n" +
           ".metric-card { background:#111; border:1px solid #2a2a2a; border-radius:6px; padding:8px 10px; }\n" +
           ".metric-card h4 { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#666; margin:0 0 6px 0; font-weight:400; }\n" +
           ".meter-row { display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:10px; color:#888; }\n" +
@@ -2356,9 +2581,6 @@
           '  <select id="popup-chunk-ms" onchange="syncToOpener(\'chunk-ms\',this.value); window.opener.pushTypoSync()">\n' +
           '    <option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>\n' +
           "  </select>\n" +
-          '  <label class="control-label" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px">\n' +
-          '    <input type="checkbox" id="popup-vad-toggle" onchange="window.opener.toggleVad()"> VAD\n' +
-          "  </label>\n" +
           "</div>\n" +
           '<div id="popup-controls">\n' +
           '  <span class="control-label">Size</span>\n' +
@@ -2388,6 +2610,7 @@
           '    <div class="metric-detail" id="groq-reset">Reset: &mdash;</div><div class="metric-detail" id="groq-calls">Calls: 0</div>\n' +
           "  </div>\n" +
           '  <div class="metric-card"><h4>Upstash (Redis)</h4><div class="metric-detail" id="upstash-calls">Calls: 0</div></div>\n' +
+          '  <div class="metric-card"><h4>Session</h4><div class="metric-detail" id="sermon-timer">--:--</div><div class="metric-detail" id="session-cost">Cost: $0.00</div></div>\n' +
           "</div></div>\n" +
           '<div id="log-panel"><div id="log-entries"></div></div>\n' +
           "<script>\n" +
@@ -2548,8 +2771,7 @@
           // A full 20-30s chunk producing only a few words is almost
           // certainly Whisper hallucinating on silence (e.g. "안녕하세요").
           // Real 25s of Korean speech yields 50-150+ characters.
-          // But VAD-cut short chunks (3-5s) legitimately produce few words,
-          // so only flag chunks larger than 100 KB (~6+ seconds of audio).
+          // Only flag chunks larger than 100 KB (~6+ seconds of audio).
           var trimmed = korean ? korean.trim() : "";
           var isLargeChunk = blob.size > 100000;
           var tooShort = isLargeChunk && trimmed.length > 0 && trimmed.length < 15 &&
@@ -2923,10 +3145,10 @@
       }
 
       var SONNET_MODEL = "claude-sonnet-4-20250514";
-      var SONNET_45_MODEL = "claude-sonnet-4-5-20250929";
       var HAIKU_MODEL = "claude-haiku-4-5-20251001";
-      var _fallbackLevel = 0; // 0=sonnet4.6, 1=sonnet4.5, 2=haiku
-      var _recoveryCheck = 0; // alternates recovery probes while on haiku
+      var _fallbackLevel = 0; // 0=sonnet, 1=haiku
+      var _fallbackTimestamp = 0; // when we fell back — try primary again after 2 min
+      var _activeClaudeController = null; // AbortController for in-flight Claude call
 
       async function claudeTranslate(korean) {
         var systemText =
@@ -2968,6 +3190,7 @@
         // Single fetch to Claude with a given model
         async function tryModel(model) {
           var controller = new AbortController();
+          _activeClaudeController = controller;
           var timer = setTimeout(function () {
             controller.abort();
           }, 30000);
@@ -2978,7 +3201,7 @@
               headers: authHeaders(),
               body: JSON.stringify({
                 model: model,
-                max_tokens: 400,
+                max_tokens: 250,
                 temperature: 0,
                 system: system,
                 messages: [{ role: "user", content: prompt }],
@@ -2987,6 +3210,7 @@
             });
           } finally {
             clearTimeout(timer);
+            _activeClaudeController = null;
           }
 
           if (!resp.ok) {
@@ -3005,6 +3229,7 @@
 
           var data = await resp.json();
           updateApiMetrics("claude", data._rateLimit);
+          accumulateCost(model, data.usage);
           var raw = data.content
             .map(function (b) {
               return b.text || "";
@@ -3020,118 +3245,29 @@
           }
         }
 
-        var lastErr;
-
-        // ── While on Haiku fallback: probe higher models to recover ──
-        if (_fallbackLevel === 2) {
-          _recoveryCheck++;
-          // Alternate probes: try 4.6 every 6th, try 4.5 every 3rd (but not when 4.6 is probed)
-          if (_recoveryCheck % 6 === 0) {
-            try {
-              var result = await tryModel(SONNET_MODEL);
-              _fallbackLevel = 0;
-              log("Sonnet 4.6 is back — resuming primary model.", "info");
-              return result;
-            } catch (e) {
-              lastErr = e;
-            }
-          } else if (_recoveryCheck % 3 === 0) {
-            try {
-              var result = await tryModel(SONNET_45_MODEL);
-              _fallbackLevel = 1;
-              log("Sonnet 4.5 is back — using as fallback.", "info");
-              return result;
-            } catch (e) {
-              lastErr = e;
-            }
-          }
-          // Use Haiku
-          try {
-            return await tryModel(HAIKU_MODEL);
-          } catch (e) {
-            throw e;
-          }
-        }
-
-        // ── While on Sonnet 4.5 fallback: probe 4.6 every other call ──
+        // ── While on Haiku fallback: try Sonnet again after 2 minutes ──
         if (_fallbackLevel === 1) {
-          _recoveryCheck++;
-          if (_recoveryCheck % 2 === 0) {
+          if (Date.now() - _fallbackTimestamp > 120000) {
             try {
               var result = await tryModel(SONNET_MODEL);
               _fallbackLevel = 0;
-              _recoveryCheck = 0;
-              log("Sonnet 4.6 is back — resuming primary model.", "info");
+              log("Sonnet is back — resuming primary model.", "info");
               return result;
             } catch (e) {
-              lastErr = e;
+              _fallbackTimestamp = Date.now(); // reset timer
             }
           }
-          // Try Sonnet 4.5 (up to 2 attempts)
-          for (var attempt = 1; attempt <= 2; attempt++) {
-            try {
-              return await tryModel(SONNET_45_MODEL);
-            } catch (e) {
-              lastErr = e;
-              if (attempt < 2) {
-                log("Sonnet 4.5 retry...", "warn");
-                await new Promise(function (r) {
-                  setTimeout(r, 1500);
-                });
-              }
-            }
-          }
-          // Sonnet 4.5 also failed — drop to Haiku
-          _fallbackLevel = 2;
-          _recoveryCheck = 0;
-          log("Sonnet 4.5 overloaded — falling back to Haiku.", "warn");
-          try {
-            return await tryModel(HAIKU_MODEL);
-          } catch (e) {
-            throw e;
-          }
-        }
-
-        // ── Primary path: Sonnet 4.6 (up to 2 attempts) ──
-        for (var attempt = 1; attempt <= 2; attempt++) {
-          try {
-            return await tryModel(SONNET_MODEL);
-          } catch (e) {
-            lastErr = e;
-            if (attempt < 2) {
-              log("Retry " + attempt + "...", "warn");
-              await new Promise(function (r) {
-                setTimeout(r, 1500 * attempt);
-              });
-            }
-          }
-        }
-
-        // Sonnet 4.6 failed 2x — try Sonnet 4.5 (up to 2 attempts)
-        _fallbackLevel = 1;
-        log("Sonnet 4.6 overloaded — falling back to Sonnet 4.5.", "warn");
-        for (var attempt = 1; attempt <= 2; attempt++) {
-          try {
-            return await tryModel(SONNET_45_MODEL);
-          } catch (e) {
-            lastErr = e;
-            if (attempt < 2) {
-              log("Sonnet 4.5 retry...", "warn");
-              await new Promise(function (r) {
-                setTimeout(r, 1500);
-              });
-            }
-          }
-        }
-
-        // Sonnet 4.5 also failed 2x — drop to Haiku
-        _fallbackLevel = 2;
-        _recoveryCheck = 0;
-        log("Sonnet 4.5 overloaded — falling back to Haiku.", "warn");
-        try {
           return await tryModel(HAIKU_MODEL);
+        }
+
+        // ── Primary path: Sonnet (1 attempt) → Haiku (1 attempt) ──
+        try {
+          return await tryModel(SONNET_MODEL);
         } catch (e) {
-          throw e;
+          _fallbackLevel = 1;
+          _fallbackTimestamp = Date.now();
+          log("Sonnet overloaded — falling back to Haiku.", "warn");
+          return await tryModel(HAIKU_MODEL);
         }
       }
 
@@ -3179,6 +3315,7 @@
                 model: "claude-haiku-4-5-20251001",
                 max_tokens: 200,
                 temperature: 0,
+                system: [{ type: "text", text: "You are a sermon summarization assistant. Produce concise 3-sentence summaries of Christian sermons.", cache_control: { type: "ephemeral" } }],
                 messages: [{ role: "user", content: prompt }],
               }),
               signal: controller.signal,
@@ -3189,6 +3326,7 @@
           if (resp.ok) {
             var data = await resp.json();
             updateApiMetrics("claude", data._rateLimit);
+            accumulateCost(HAIKU_MODEL, data.usage);
             sermonSummary = data.content
               .map(function (b) {
                 return b.text || "";
@@ -3455,6 +3593,7 @@
 
       document.addEventListener("DOMContentLoaded", function () {
         requestWakeLock();
+        window.addEventListener("resize", _recheckViewportFill);
         if (adminKey) log("Waiting for sermon\u2026", "info");
         document
           .getElementById("transcript")
@@ -3491,7 +3630,9 @@
           });
         })();
 
-        if (isRemote) {
+        if (isViewer) {
+          initViewer();
+        } else if (isRemote) {
           initRemote();
         } else {
           applyTypography();

@@ -19,8 +19,13 @@ const { checkAuth } = require('./auth');
 
 exports.handler = async (event) => {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) return { statusCode: 500, body: JSON.stringify({ error: 'Upstash not configured' }) };
-  const authErr = checkAuth(event);
-  if (authErr) return authErr;
+  // Auth is optional: if a key is provided, validate it (so admin/remote auth gate works).
+  // If no key is provided, allow through (viewer is public read-only).
+  const key = event.headers['x-admin-key'];
+  if (key) {
+    const authErr = checkAuth(event);
+    if (authErr) return authErr;
+  }
 
   try {
     const since      = parseInt(event.queryStringParameters?.since      || '0');
