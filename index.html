@@ -1210,9 +1210,12 @@
               ? "SERMON TRANSLATOR REMOTE CONTROLS"
               : "THE LORD'S CHURCH SERMON TRANSLATOR") +
           "</div>" +
+          '<form id="auth-form" action="javascript:void(0)" style="display:flex;flex-direction:column;align-items:center;gap:0">' +
           '<input id="auth-input" type="password" placeholder="Enter admin key\u2026" autofocus ' +
           'style="background:#111;border:1px solid #333;border-radius:6px;padding:12px 18px;' +
           'color:#fff;font-size:16px;width:260px;text-align:center;outline:none">' +
+          '<button type="submit" style="display:none"></button>' +
+          '</form>' +
           '<div id="auth-error" style="color:#e55;font-size:13px;height:18px"></div>' +
           (_isRemotePage
             ? ""
@@ -1225,11 +1228,10 @@
         document.body.appendChild(overlay);
 
         var input = document.getElementById("auth-input");
-        input.addEventListener("keydown", function (e) {
-          if (e.key !== "Enter") return;
+        document.getElementById("auth-form").addEventListener("submit", function (e) {
+          e.preventDefault();
           var val = input.value.trim();
           if (!val) return;
-          // Test the key against a lightweight endpoint
           adminKey = val;
           fetch("/api/sync-pull?since=0", { headers: { "x-admin-key": val } })
             .then(function (r) {
