@@ -1135,6 +1135,17 @@
           isMuted ? "Muted — audio will be discarded." : "Unmuted.",
           isMuted ? "warn" : "info",
         );
+        if (isMuted) {
+          // Stop current recorder early to flush audio recorded so far,
+          // then don't start a new recording loop until unmuted
+          if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+            clearTimeout(chunkTimer);
+          }
+        } else {
+          // Resuming from mute — restart the recording loop
+          if (isListening) recordChunk();
+        }
         pushSync("state", {
           isListening: isListening,
           isMuted: isMuted,
@@ -2190,6 +2201,7 @@
           '<option value="20000">20s</option><option value="25000">25s</option><option value="30000" selected>30s</option>' +
           "</select>" +
           "</div>" +
+          // Group 3b: LLM selector
           // Group 4: Font Size
           '<div class="control-group">' +
           '<span class="control-label">Font Size</span>' +
@@ -2666,6 +2678,7 @@
       function recordChunk() {
         if (!isListening) return;
         audioChunks = [];
+        var mutedAtStart = isMuted;
 
         var mime = bestMime();
         var ms = parseInt(document.getElementById("chunk-ms").value);
@@ -2684,14 +2697,13 @@
         };
 
         mediaRecorder.onstop = function () {
-          if (isMuted) {
+          if (mutedAtStart) {
             audioChunks = [];
-            if (isListening) recordChunk();
             return;
           }
           if (!audioChunks.length) {
             log("Empty chunk, skipping.", "warn");
-            if (isListening) recordChunk();
+            if (isListening && !isMuted) recordChunk();
             return;
           }
           var actualMime = mediaRecorder.mimeType || mime || "audio/webm";
@@ -2699,12 +2711,12 @@
           log("Chunk: " + (blob.size / 1024).toFixed(1) + " KB", "info");
           if (blob.size < 8000) {
             log("Chunk too small (silence), skipping.", "warn");
-            if (isListening) recordChunk();
+            if (isListening && !isMuted) recordChunk();
             return;
           }
           queue.push(blob);
           processNext();
-          if (isListening) recordChunk();
+          if (isListening && !isMuted) recordChunk();
         };
 
         mediaRecorder.start(500);
@@ -3120,7 +3132,7 @@
               "info",
             );
             log("Claude translating...");
-            var result = await claudeTranslate(korean);
+            var result = await translateKorean(korean);
 
             // If session was stopped during translation, skip render+push
             if (_stoppedAt > chunkStarted) {
@@ -3495,9 +3507,8 @@
       var _fallbackTimestamp = 0; // when we fell back — try primary again after 2 min
       var _activeClaudeController = null; // AbortController for in-flight Claude call
 
-      async function claudeTranslate(korean) {
-        var systemText =
-          "You are a Korean-to-English translation assistant for a live Christian church service displayed on screen.\n\n" +
+      var claudeSystemText =
+        "You are a Korean-to-English translation assistant for a live Christian church service displayed on screen.\n\n" +
           "The microphone may pick up not just the pastor speaking, but also musical instruments (piano, guitar, organ, drums, etc.), or ambient sounds.\n\n" +
           "RULES:\n" +
           '1. If the text you receive contains ANY Korean words or phrases, it is ALWAYS speech — translate it. Never classify Korean text as music. Only return {"music":"description"} if the text contains absolutely zero Korean and consists entirely of descriptions of sounds/instruments in another language. When in doubt, always translate — a missed translation is far less harmful than silently dropping real sermon content.\n' +
@@ -3518,6 +3529,9 @@
           "Respond ONLY in valid JSON, no markdown:\n" +
           'For speech: {"english":"translated text","scripture":[{"ref":"John 3:16","note":""}]}\n' +
           'For music only: {"music":"description of what is playing"}';
+
+      async function claudeTranslate(korean) {
+        var systemText = claudeSystemText;
 
         // Use structured system format with cache_control for prompt caching.
         // The system prompt is identical for every call, so caching it saves ~90%
@@ -3614,6 +3628,13 @@
           log("Sonnet overloaded — falling back to Haiku.", "warn");
           return await tryModel(HAIKU_MODEL);
         }
+      }
+
+      // ════════════════════════════════════════════════════════════
+      //  TRANSLATE
+      // ════════════════════════════════════════════════════════════
+      async function translateKorean(korean) {
+        return await claudeTranslate(korean);
       }
 
       // ════════════════════════════════════════════════════════════
@@ -4020,9 +4041,7 @@
                     lastEnglishTail = ctx.lastEnglishTail || "";
                     // Rebuild allSegments from recentSegments (best effort)
                     allSegments = ctx.recentSegments.slice();
-                    log("Session recovered: " + recentSegments.length + " segments restored.", "info");
-                    toast("Session context recovered from Redis");
-                  }
+                                      }
                 }
               })
               .catch(function () {});
