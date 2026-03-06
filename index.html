@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sermon Transcript</title>
     <link
+      rel="preload"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400&display=swap"
+      as="style"
+    />
+    <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400&display=swap"
       rel="stylesheet"
     />
@@ -54,6 +59,7 @@
       .entry {
         margin-bottom: var(--chunk-spacing, 60px);
         animation: fadeIn 0.45s ease forwards;
+        will-change: opacity;
         opacity: 0;
       }
       @keyframes fadeIn {
@@ -391,6 +397,38 @@
         width: 160px;
       }
 
+      /* Processing indicator — pulsing dot visible on projected screen */
+      #processing-dot {
+        display: none;
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #4a4;
+        z-index: 100;
+      }
+      #processing-dot.active {
+        display: block;
+        animation: pulse-dot 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 0.3; transform: scale(0.85); }
+        50% { opacity: 1; transform: scale(1.1); }
+      }
+
+      /* OBS transparent mode — toggled via viewer/remote panel button */
+      body.obs-transparent {
+        background: transparent !important;
+      }
+      body.obs-transparent #main {
+        background: transparent !important;
+      }
+      body.obs-transparent .entry {
+        text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+      }
+
       /* Sermon title — styled identically to transcript sentences */
       #sermon-title-display {
         display: none;
@@ -594,6 +632,25 @@
         #remote-download {
           display: none;
         }
+        /* Larger tap targets for mobile */
+        #console-btn,
+        #remote-console-btn,
+        #viewer-console-btn {
+          font-size: 28px;
+          padding: 12px;
+          bottom: 14px;
+          right: 14px;
+        }
+        .resize-handle,
+        #resize-handle {
+          height: 32px;
+        }
+        #console-header .btn,
+        #remote-panel .btn,
+        #viewer-panel .btn {
+          padding: 10px 16px;
+          font-size: 14px;
+        }
         #viewer-panel {
           height: 250px;
           max-height: 80vh;
@@ -608,6 +665,7 @@
     </style>
   </head>
   <body>
+    <div id="processing-dot"></div>
     <div id="main">
       <div id="sermon-title-display"></div>
       <div id="transcript"></div>
@@ -622,12 +680,23 @@
       <div id="console-header">
         <span>Admin Console</span>
         <span
+          id="connection-badge"
+          style="
+            font-size: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #3a3;
+            margin-left: auto;
+            margin-right: 8px;
+            display: none;
+          "
+        ></span>
+        <span
           id="queue-depth"
           style="
             font-size: 12px;
             letter-spacing: 1px;
             text-transform: uppercase;
-            margin-left: auto;
             margin-right: 16px;
           "
         ></span>
@@ -677,6 +746,9 @@
           >
             &#8595; Download
           </button>
+          <span id="vu-meter" style="display:none;margin-left:8px;width:60px;height:14px;background:#111;border-radius:3px;overflow:hidden;vertical-align:middle">
+            <span id="vu-bar" style="display:block;height:100%;width:0%;background:#4a4;transition:width 0.08s linear"></span>
+          </span>
           <span
             id="sermon-timer"
             style="
@@ -686,11 +758,6 @@
               font-variant-numeric: tabular-nums;
             "
             >--:--</span
-          >
-          <span
-            id="session-cost"
-            style="font-size: 13px; color: #666; margin-left: 4px"
-            >Cost: $0.00</span
           >
         </div>
         <div class="control-group">
@@ -964,15 +1031,29 @@
         return _viewportFillCached;
       }
 
+      var _elMain = null;
+      var _elTranscript = null;
+      var _elLogEntries = null;
+
+      function _getMain() {
+        return _elMain || (_elMain = document.getElementById("main"));
+      }
+      function _getTranscript() {
+        return _elTranscript || (_elTranscript = document.getElementById("transcript"));
+      }
+      function _getLogEntries() {
+        return _elLogEntries || (_elLogEntries = document.getElementById("log-entries"));
+      }
+
       function _recheckViewportFill() {
-        var transcript = document.getElementById("transcript");
-        var main = document.getElementById("main");
+        var transcript = _getTranscript();
+        var main = _getMain();
         _viewportFillCached =
           transcript.offsetHeight >= main.clientHeight * SCROLL_FILL_THRESHOLD;
       }
 
       function _scrollStep(now) {
-        var main = document.getElementById("main");
+        var main = _getMain();
         var dt = (now - _scrollLastT) / 1000;
         _scrollLastT = now;
         if (dt > 0.1) dt = 0.1;
@@ -1039,7 +1120,7 @@
         autoScroll = true;
         updateFollowBtn();
         _scrollLock = true;
-        var main = document.getElementById("main");
+        var main = _getMain();
         main.scrollTop = main.scrollHeight - main.clientHeight;
         requestAnimationFrame(function () {
           _scrollLock = false;
@@ -1173,6 +1254,11 @@
 
       var isViewer = location.search.indexOf("viewer") !== -1;
       var isRemote = !isViewer && location.search.indexOf("remote") !== -1;
+      var _deviceId = sessionStorage.getItem("deviceId");
+      if (!_deviceId) {
+        _deviceId = Math.random().toString(36).slice(2, 10);
+        sessionStorage.setItem("deviceId", _deviceId);
+      }
 
       // Gate everything behind auth — if no stored key, show prompt
       // Viewer is public (read-only, no auth needed)
@@ -1186,6 +1272,7 @@
       let audioChunks = [];
       let isListening = false; // session active (mic open)
       let micStream = null;
+      var _vuCtx = null, _vuAnalyser = null, _vuSource = null, _vuRaf = 0;
       let chunkTimer = null;
       let queue = []; // audio blobs waiting to be processed (FIFO)
       let busy = false; // true while a chunk is going through the pipeline
@@ -1366,12 +1453,14 @@
           var tokPct = m.tokLimit ? (m.tokRemaining / m.tokLimit) * 100 : 0;
           var reqFill = doc.getElementById(prefix + svc + "-req-fill");
           var tokFill = doc.getElementById(prefix + svc + "-tok-fill");
-          if (reqFill) {
-            reqFill.style.width = reqPct + "%";
+          var reqW = reqPct + "%";
+          var tokW = tokPct + "%";
+          if (reqFill && reqFill.style.width !== reqW) {
+            reqFill.style.width = reqW;
             reqFill.className = "meter-fill " + meterColor(reqPct);
           }
-          if (tokFill) {
-            tokFill.style.width = tokPct + "%";
+          if (tokFill && tokFill.style.width !== tokW) {
+            tokFill.style.width = tokW;
             tokFill.className = "meter-fill " + meterColor(tokPct);
           }
           var reqVal = doc.getElementById(prefix + svc + "-req-val");
@@ -1525,13 +1614,27 @@
           consoleWindow.addLog(text, cls);
         }
 
-        const wrap = document.getElementById("log-entries");
+        const wrap = _getLogEntries();
         const el = document.createElement("div");
         el.className = "log " + cls;
         el.textContent = text;
         wrap.appendChild(el);
         while (wrap.children.length > 150) wrap.removeChild(wrap.firstChild);
         if (consoleOpen) document.getElementById("log-panel").scrollTop = 99999;
+      }
+
+      function updateConnectionBadge(count) {
+        ["connection-badge", "remote-connection-badge"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          if (count > 0) {
+            el.textContent = count + " connected";
+            el.style.display = "";
+          } else {
+            el.textContent = "";
+            el.style.display = "none";
+          }
+        });
       }
 
       function updateQueueDepth() {
@@ -1549,6 +1652,14 @@
         const el = document.getElementById("toast");
         el.textContent = msg;
         el.style.display = "block";
+        // Position above any open drawer
+        var drawer = document.getElementById("console-drawer");
+        var remote = document.getElementById("remote-panel");
+        var viewer = document.getElementById("viewer-panel");
+        var openDrawer = [drawer, remote, viewer].find(function (d) {
+          return d && d.classList.contains("open");
+        });
+        el.style.bottom = openDrawer ? (openDrawer.offsetHeight + 12) + "px" : "50px";
         clearTimeout(window._tt);
         window._tt = setTimeout(function () {
           el.style.display = "none";
@@ -1706,6 +1817,8 @@
       // Laptop polls sync-pull for commands + edits + typography in ONE fetch.
       // Uses since=9999999999999 to skip transcript entries (laptop already has them).
       var lastCommandId = Date.now(); // ignore stale commands from before this page load
+      var _pollIntervalIds = {}; // guard against duplicate pollers
+      var _pollBackoff = { commands: 3000, remote: 3000, viewer: 3000 }; // backoff timers
       async function pollCommands() {
         if (isRemote) return;
         apiMetrics.upstash.callCount++;
@@ -1714,8 +1827,9 @@
             "/api/sync-pull?since=9999999999999&sinceEdit=" + lastEditId,
             { headers: { "x-admin-key": adminKey } },
           );
-          if (!resp.ok) return;
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
           var data = await resp.json();
+          _pollBackoff.commands = 3000; // reset on success
 
           // Process remote commands (start, stop, mute, clear, setChunkMs)
           var cmd = data.command;
@@ -1738,7 +1852,24 @@
             applyEdit(edit);
           });
           applyTypoState(data.typo);
-        } catch (_) {}
+          // Update connected devices badge
+          updateConnectionBadge(data.connectedDevices || 0);
+        } catch (_) {
+          _pollBackoff.commands = Math.min(_pollBackoff.commands * 2, 30000);
+        }
+      }
+
+      // ── Device heartbeat (remote + viewer) ─────────────────────────
+      function sendHeartbeat() {
+        if (!isRemote && !isViewer) return;
+        fetch("/api/sync-push", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            type: "heartbeat",
+            data: { deviceId: _deviceId, type: isRemote ? "remote" : "viewer" },
+          }),
+        }).catch(function () {});
       }
 
       // ── Remote (phone) side ──────────────────────────────────────
@@ -1749,6 +1880,7 @@
       var _remoteSessionActive = false; // tracks whether we've seen isListening:true
 
       async function pollRemote() {
+        sendHeartbeat();
         apiMetrics.upstash.callCount++;
         try {
           var resp = await fetch(
@@ -1795,8 +1927,11 @@
           });
 
           applyTypoState(data.typo);
+          updateConnectionBadge(data.connectedDevices || 0);
+          _pollBackoff.remote = 3000; // reset on success
           setRemoteStatus(isLive ? "live" : "ready");
         } catch (_) {
+          _pollBackoff.remote = Math.min(_pollBackoff.remote * 2, 30000);
           setRemoteStatus("offline");
         }
       }
@@ -1828,6 +1963,7 @@
           lastClearedAt = state.clearedAt;
           lastEntryId = 0;
           lastEditId = 0;
+          _renderedEntryIds.clear();
           document.getElementById("transcript").innerHTML = "";
         }
 
@@ -1861,6 +1997,7 @@
         }
       }
 
+
       async function sendCommand(command, value) {
         try {
           var payload = { command: command, id: Date.now() };
@@ -1886,19 +2023,9 @@
         }).catch(function () {});
       }
 
-      // Attach blur listeners to an entry's sentences so edits sync to the other device
-      function addEditListeners(entryEl, entryId) {
-        entryEl.querySelectorAll(".sentence").forEach(function (span) {
-          span.addEventListener("blur", function () {
-            var texts = Array.from(entryEl.querySelectorAll(".sentence")).map(
-              function (s) {
-                return s.textContent.trim();
-              },
-            );
-            pushEdit(entryId, texts);
-          });
-        });
-      }
+      // Edit listeners use event delegation — see DOMContentLoaded setup.
+      // This stub preserves the call sites in renderEntry/renderRemoteEntry.
+      function addEditListeners() {}
 
       // Apply an incoming edit to the matching entry in the local DOM
       function applyEdit(edit) {
@@ -1916,12 +2043,9 @@
 
       function renderRemoteEntry(entry) {
         // Skip if already rendered (prevents double-render on rapid back-to-back polls)
-        if (
-          entry.id &&
-          document.querySelector('[data-entry-id="' + entry.id + '"]')
-        )
-          return;
-        var wrap = document.getElementById("transcript");
+        if (entry.id && _renderedEntryIds.has(String(entry.id))) return;
+        if (entry.id) _renderedEntryIds.add(String(entry.id));
+        var wrap = _getTranscript();
 
         if (entry.type === "music") {
           var label = document.createElement("div");
@@ -1961,6 +2085,8 @@
           addEditListeners(div, entry.id);
         }
       }
+
+      var _renderedEntryIds = new Set();
 
       var remotePanelOpen = false;
 
@@ -2018,48 +2144,7 @@
         var resizeHandle = document.createElement("div");
         resizeHandle.className = "resize-handle";
 
-        // Drag-to-resize
-        (function () {
-          var startY, startH;
-          resizeHandle.addEventListener("mousedown", function (e) {
-            startY = e.clientY;
-            startH = panel.offsetHeight;
-            e.preventDefault();
-            function onMove(ev) {
-              var h = startH - (ev.clientY - startY);
-              panel.style.height =
-                Math.max(160, Math.min(h, window.innerHeight * 0.9)) + "px";
-            }
-            function onUp() {
-              document.removeEventListener("mousemove", onMove);
-              document.removeEventListener("mouseup", onUp);
-            }
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onUp);
-          });
-          resizeHandle.addEventListener(
-            "touchstart",
-            function (e) {
-              startY = e.touches[0].clientY;
-              startH = panel.offsetHeight;
-              function onMove(ev) {
-                ev.preventDefault();
-                var h = startH - (ev.touches[0].clientY - startY);
-                panel.style.height =
-                  Math.max(160, Math.min(h, window.innerHeight * 0.9)) + "px";
-              }
-              function onEnd() {
-                document.removeEventListener("touchmove", onMove);
-                document.removeEventListener("touchend", onEnd);
-              }
-              document.addEventListener("touchmove", onMove, {
-                passive: false,
-              });
-              document.addEventListener("touchend", onEnd);
-            },
-            { passive: true },
-          );
-        })();
+        initResizeHandle(resizeHandle, panel);
 
         panel.appendChild(resizeHandle);
 
@@ -2069,7 +2154,8 @@
           "display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid #1a1a1a;flex-shrink:0";
         header.innerHTML =
           '<span style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#666">Remote Admin Console</span>' +
-          '<span id="remote-status" class="remote-status offline" style="margin-left:auto;margin-right:16px">&#9675; Connecting&#x2026;</span>' +
+          '<span id="remote-connection-badge" style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#3a3;margin-left:auto;margin-right:8px;display:none"></span>' +
+          '<span id="remote-status" class="remote-status offline" style="margin-right:16px">&#9675; Connecting&#x2026;</span>' +
           '<button class="btn btn-muted" style="padding:6px 14px;font-size:13px" onclick="toggleMetricsPanel()">Metrics</button>' +
           '<button class="btn btn-muted" style="padding:6px 14px;font-size:13px" onclick="toggleRemotePanel()">Close</button>';
         panel.appendChild(header);
@@ -2088,7 +2174,6 @@
           '<button class="btn btn-muted" onclick="sendCommand(\'clear\')">Clear</button>' +
           '<button class="btn btn-muted" id="remote-download" onclick="downloadTranscript(\'Remote download\')">&#8595; Download</button>' +
           '<span id="r-sermon-timer" style="font-size:13px;color:#666;margin-left:8px;font-variant-numeric:tabular-nums">--:--</span>' +
-          '<span id="r-session-cost" style="font-size:13px;color:#666;margin-left:4px">Cost: $0.00</span>' +
           "</div>" +
           // Group 2: title
           '<div class="control-group">' +
@@ -2168,9 +2253,12 @@
 
         document.body.appendChild(panel);
 
-        // Start polling
-        pollRemote();
-        setInterval(pollRemote, 3000);
+        // Start polling with dynamic backoff
+        (function scheduleRemotePoll() {
+          pollRemote().then(function () {
+            setTimeout(scheduleRemotePoll, _pollBackoff.remote);
+          });
+        })();
         // Tick sermon timer on remote
         setInterval(function () {
           var el = document.getElementById("r-sermon-timer");
@@ -2189,6 +2277,15 @@
         viewerPanelOpen = !viewerPanelOpen;
         var panel = document.getElementById("viewer-panel");
         if (panel) panel.classList.toggle("open", viewerPanelOpen);
+      }
+
+      function toggleOBS(btn) {
+        var on = document.body.classList.toggle("obs-transparent");
+        if (btn) {
+          btn.textContent = on ? "OBS Mode: ON" : "OBS Mode";
+          btn.style.color = on ? "#4a4" : "";
+          btn.style.borderColor = on ? "#4a4" : "";
+        }
       }
 
       function initViewer() {
@@ -2250,48 +2347,7 @@
         var resizeHandle = document.createElement("div");
         resizeHandle.className = "resize-handle";
 
-        // Drag-to-resize
-        (function () {
-          var startY, startH;
-          resizeHandle.addEventListener("mousedown", function (e) {
-            startY = e.clientY;
-            startH = panel.offsetHeight;
-            e.preventDefault();
-            function onMove(ev) {
-              var h = startH - (ev.clientY - startY);
-              panel.style.height =
-                Math.max(160, Math.min(h, window.innerHeight * 0.9)) + "px";
-            }
-            function onUp() {
-              document.removeEventListener("mousemove", onMove);
-              document.removeEventListener("mouseup", onUp);
-            }
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onUp);
-          });
-          resizeHandle.addEventListener(
-            "touchstart",
-            function (e) {
-              startY = e.touches[0].clientY;
-              startH = panel.offsetHeight;
-              function onMove(ev) {
-                ev.preventDefault();
-                var h = startH - (ev.touches[0].clientY - startY);
-                panel.style.height =
-                  Math.max(160, Math.min(h, window.innerHeight * 0.9)) + "px";
-              }
-              function onEnd() {
-                document.removeEventListener("touchmove", onMove);
-                document.removeEventListener("touchend", onEnd);
-              }
-              document.addEventListener("touchmove", onMove, {
-                passive: false,
-              });
-              document.addEventListener("touchend", onEnd);
-            },
-            { passive: true },
-          );
-        })();
+        initResizeHandle(resizeHandle, panel);
 
         panel.appendChild(resizeHandle);
 
@@ -2355,14 +2411,20 @@
           '<input type="number" id="viewer-scroll-input" min="40" max="500" value="77" ' +
           "oninput=\"scrollSpeed=parseInt(this.value);document.getElementById('viewer-scroll-slider').value=this.value\">" +
           '<button class="btn btn-muted" id="viewer-follow" onclick="resumeAutoScroll()" style="display:none;padding:6px 14px;font-size:13px;margin-left:4px">&#8615; Go to bottom</button>' +
+          "</div>" +
+          '<div class="control-group">' +
+          '<button class="btn btn-muted" id="obs-toggle" onclick="toggleOBS(this)" style="padding:6px 14px;font-size:13px">OBS Mode</button>' +
           "</div>";
         panel.appendChild(controls);
 
         document.body.appendChild(panel);
 
-        // Start polling
-        pollViewer();
-        setInterval(pollViewer, 3000);
+        // Start polling with dynamic backoff
+        (function scheduleViewerPoll() {
+          pollViewer().then(function () {
+            setTimeout(scheduleViewerPoll, _pollBackoff.viewer);
+          });
+        })();
       }
 
       function setViewerStatus(status) {
@@ -2380,6 +2442,7 @@
       var _viewerSessionActive = false; // tracks whether we've seen isListening:true
 
       async function pollViewer() {
+        sendHeartbeat();
         try {
           var resp = await fetch(
             "/api/sync-pull?since=" + lastEntryId + "&sinceEdit=" + lastEditId,
@@ -2402,6 +2465,7 @@
             (data.edits || []).forEach(function (edit) {
               if (edit.id > lastEditId) lastEditId = edit.id;
             });
+            applyViewerTitle(data.typo);
             setViewerStatus("ready");
             return;
           }
@@ -2422,19 +2486,19 @@
             applyEdit(edit);
           });
 
+          applyViewerTitle(data.typo);
+          _pollBackoff.viewer = 3000; // reset on success
           setViewerStatus(isLive ? "live" : "ready");
         } catch (_) {
+          _pollBackoff.viewer = Math.min(_pollBackoff.viewer * 2, 30000);
           setViewerStatus("offline");
         }
       }
 
       function renderViewerEntry(entry) {
-        if (
-          entry.id &&
-          document.querySelector('[data-entry-id="' + entry.id + '"]')
-        )
-          return;
-        var wrap = document.getElementById("transcript");
+        if (entry.id && _renderedEntryIds.has(String(entry.id))) return;
+        if (entry.id) _renderedEntryIds.add(String(entry.id));
+        var wrap = _getTranscript();
 
         if (entry.type === "music") {
           var label = document.createElement("div");
@@ -2475,11 +2539,63 @@
           lastClearedAt = state.clearedAt;
           lastEntryId = 0;
           lastEditId = 0;
+          _renderedEntryIds.clear();
           document.getElementById("transcript").innerHTML = "";
         }
       }
 
+      // Viewer also applies sermon title from typo sync
+      function applyViewerTitle(typo) {
+        if (!typo || typo.sermonTitle === undefined) return;
+        var displayEl = document.getElementById("sermon-title-display");
+        if (displayEl) {
+          displayEl.textContent = typo.sermonTitle
+            ? "Sermon Title: " + typo.sermonTitle
+            : "";
+          displayEl.style.display = typo.sermonTitle ? "block" : "none";
+        }
+      }
+
       // ════════════════════════════════════════════════════════════
+      // ── VU meter — real-time mic level display ──────────────────
+      function startVuMeter(stream) {
+        try {
+          _vuCtx = new (window.AudioContext || window.webkitAudioContext)();
+          _vuAnalyser = _vuCtx.createAnalyser();
+          _vuAnalyser.fftSize = 256;
+          _vuSource = _vuCtx.createMediaStreamSource(stream);
+          _vuSource.connect(_vuAnalyser);
+          var buf = new Uint8Array(_vuAnalyser.frequencyBinCount);
+          var meter = document.getElementById("vu-meter");
+          var bar = document.getElementById("vu-bar");
+          if (meter) meter.style.display = "inline-block";
+          function tick() {
+            _vuAnalyser.getByteFrequencyData(buf);
+            var sum = 0;
+            for (var i = 0; i < buf.length; i++) sum += buf[i];
+            var avg = sum / buf.length;
+            var pct = Math.min(100, Math.round(avg / 128 * 100));
+            if (bar) {
+              bar.style.width = pct + "%";
+              bar.style.background = pct > 70 ? "#e55" : pct > 40 ? "#ea3" : "#4a4";
+            }
+            _vuRaf = requestAnimationFrame(tick);
+          }
+          tick();
+        } catch (_) {}
+      }
+      function stopVuMeter() {
+        cancelAnimationFrame(_vuRaf);
+        _vuRaf = 0;
+        if (_vuSource) { try { _vuSource.disconnect(); } catch (_) {} _vuSource = null; }
+        if (_vuCtx) { try { _vuCtx.close(); } catch (_) {} _vuCtx = null; }
+        _vuAnalyser = null;
+        var meter = document.getElementById("vu-meter");
+        var bar = document.getElementById("vu-bar");
+        if (meter) meter.style.display = "none";
+        if (bar) bar.style.width = "0%";
+      }
+
       //  RECORDING — mic capture in configurable chunks (20/25/30s)
       //  Each chunk goes through: mute gate → size gate → queue → pipeline
       // ════════════════════════════════════════════════════════════
@@ -2491,6 +2607,7 @@
             audio: true,
           });
           log("Microphone granted.", "info");
+          startVuMeter(micStream);
         } catch (e) {
           log("Mic error: " + e.message, "err");
           toast("Microphone error: " + e.message);
@@ -2524,12 +2641,16 @@
         recordChunk();
       }
 
+      var _timerEls = null;
       function updateSermonTimer() {
         var txt = formatSermonTimer();
-        var ids = ["sermon-timer", "r-sermon-timer"];
-        for (var i = 0; i < ids.length; i++) {
-          var el = document.getElementById(ids[i]);
-          if (el) el.textContent = txt;
+        if (!_timerEls) {
+          _timerEls = ["sermon-timer", "r-sermon-timer"]
+            .map(function (id) { return document.getElementById(id); })
+            .filter(Boolean);
+        }
+        for (var i = 0; i < _timerEls.length; i++) {
+          _timerEls[i].textContent = txt;
         }
         if (consoleWindow && !consoleWindow.closed) {
           try {
@@ -2612,6 +2733,7 @@
 
       var _stoppedAt = 0; // epoch when session was stopped — pipeline skips if started before this
 
+      // Double-tap stop: first click shows "Confirm?", second click within 2s actually stops.
       function stopSession() {
         isListening = false;
         _stoppedAt = Date.now();
@@ -2627,6 +2749,7 @@
         }
         if (mediaRecorder && mediaRecorder.state !== "inactive")
           mediaRecorder.stop();
+        stopVuMeter();
         if (micStream) {
           micStream.getTracks().forEach(function (t) {
             t.stop();
@@ -2658,13 +2781,13 @@
 
       function clearAll() {
         // Visual-only: push existing text off-screen with a spacer, don't wipe context
-        var transcript = document.getElementById("transcript");
+        var transcript = _getTranscript();
         if (transcript && transcript.innerHTML.trim()) {
           var spacer = document.createElement("div");
           spacer.style.height = "100vh";
           transcript.appendChild(spacer);
           transcript.scrollTop = transcript.scrollHeight;
-          var main = document.getElementById("main");
+          var main = _getMain();
           if (main) main.scrollTop = main.scrollHeight;
         }
         applySermonTitle("");
@@ -2673,6 +2796,15 @@
 
       function resetSession() {
         // Full reset: wipe all sermon context, transcript DOM, and Redis
+        clearTimeout(_typoTimer);
+        clearTimeout(_titleTranslateTimer);
+        clearTimeout(_metricsTimer);
+        _metricsTimer = 0;
+        if (_sermonTimerInterval) {
+          clearInterval(_sermonTimerInterval);
+          _sermonTimerInterval = null;
+        }
+        _renderedEntryIds.clear();
         document.getElementById("transcript").innerHTML = "";
         document.getElementById("log-entries").innerHTML = "";
         recentSegments = [];
@@ -2927,10 +3059,16 @@
       //  → Claude Sonnet (KO→EN translation) → render + sync
       //  Chunks are processed one-at-a-time in FIFO order.
       // ════════════════════════════════════════════════════════════
+      function setProcessingDot(on) {
+        var dot = document.getElementById("processing-dot");
+        if (dot) dot.classList.toggle("active", on);
+      }
+
       async function processNext() {
         updateQueueDepth();
         if (busy || !queue.length) return;
         busy = true;
+        setProcessingDot(true);
         var blob = queue.shift();
         var chunkStarted = Date.now(); // track when this chunk entered the pipeline
         updateQueueDepth();
@@ -3010,6 +3148,14 @@
 
               renderEntry(result);
 
+              // Persist context to Redis for crash recovery
+              pushSync("context", {
+                recentSegments: recentSegments,
+                allSegmentsCount: allSegments.length,
+                sermonSummary: sermonSummary,
+                lastEnglishTail: lastEnglishTail,
+              });
+
               if (allSegments.length % SUMMARY_EVERY === 0 && !summarizing) {
                 generateSermonSummary();
               }
@@ -3021,6 +3167,7 @@
         }
 
         busy = false;
+        setProcessingDot(false);
         updateQueueDepth();
         processNext();
       }
@@ -3104,8 +3251,10 @@
         return got ? { value: val, consumed: i - start } : null;
       }
 
+      var _WORD_SPLIT_RE = /\s+/;
+
       function _hasSequentialNumbers(text) {
-        var words = text.trim().split(/\s+/);
+        var words = text.trim().split(_WORD_SPLIT_RE);
         var consecutive = 0,
           lastNum = null;
         var i = 0;
@@ -3152,7 +3301,7 @@
       //   4. Low Korean density (mostly non-Korean in what should be Korean audio)
       //   5. High script diversity (3+ script families = gibberish soup)
       function isHallucination(text) {
-        var words = text.trim().split(/\s+/);
+        var words = text.trim().split(_WORD_SPLIT_RE);
         if (words.length < 6) return false;
 
         // 1. Repeated bigrams — same word pair 5+ times
@@ -3544,7 +3693,7 @@
       //  DOWNLOAD TRANSCRIPT
       // ════════════════════════════════════════════════════════════
       function downloadTranscript(reason) {
-        var transcriptEl = document.getElementById("transcript");
+        var transcriptEl = _getTranscript();
         var entries = transcriptEl.querySelectorAll(".entry, .music-label");
         if (!entries.length) return;
 
@@ -3611,7 +3760,7 @@
       //  Pushes each entry to Redis for phone sync.
       // ════════════════════════════════════════════════════════════
       function renderMusic(description) {
-        var wrap = document.getElementById("transcript");
+        var wrap = _getTranscript();
         var label = document.createElement("div");
         label.className = "music-label";
         label.textContent = description;
@@ -3626,7 +3775,7 @@
 
       function renderEntry(result) {
         var entryId = Date.now();
-        var wrap = document.getElementById("transcript");
+        var wrap = _getTranscript();
         var entry = document.createElement("div");
         entry.className = "entry";
         entry.dataset.entryId = String(entryId);
@@ -3789,16 +3938,36 @@
       document.addEventListener("visibilitychange", function () {
         if (document.visibilityState === "visible") requestWakeLock();
       });
+      window.addEventListener("beforeunload", function () {
+        cancelScrollAnim();
+        clearTimeout(_typoTimer);
+        clearTimeout(_titleTranslateTimer);
+        clearTimeout(_metricsTimer);
+        if (_sermonTimerInterval) clearInterval(_sermonTimerInterval);
+      });
 
       document.addEventListener("DOMContentLoaded", function () {
         requestWakeLock();
-        window.addEventListener("resize", _recheckViewportFill);
+        var _resizeDebounce = null;
+        window.addEventListener("resize", function () {
+          clearTimeout(_resizeDebounce);
+          _resizeDebounce = setTimeout(_recheckViewportFill, 100);
+        });
         if (adminKey) log("Waiting for sermon\u2026", "info");
-        document
-          .getElementById("transcript")
-          .addEventListener("keydown", function (e) {
-            if (e.key === "Enter") e.preventDefault();
-          });
+        var transcriptEl = document.getElementById("transcript");
+        transcriptEl.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") e.preventDefault();
+        });
+        // Delegated edit listener — one handler for all .sentence blur events
+        transcriptEl.addEventListener("blur", function (e) {
+          if (!e.target.classList.contains("sentence")) return;
+          var entryEl = e.target.closest(".entry");
+          if (!entryEl || !entryEl.dataset.entryId) return;
+          var texts = Array.from(entryEl.querySelectorAll(".sentence")).map(
+            function (s) { return s.textContent.trim(); }
+          );
+          pushEdit(entryEl.dataset.entryId, texts);
+        }, true);
 
         // Smart scroll detection — disable auto-follow when user scrolls up
         (function () {
@@ -3820,7 +3989,7 @@
                 if (atBot) scrollToBottom();
               }
             }, 120);
-          });
+          }, { passive: true });
 
           // User intentionally scrolling — cancel animation immediately
           main.addEventListener("wheel", cancelScrollAnim, { passive: true });
@@ -3835,73 +4004,111 @@
           initRemote();
         } else {
           applyTypography();
-          setInterval(pollCommands, 3000);
+          // Check for recoverable session on first load
+          (function tryRecoverSession() {
+            fetch("/api/sync-pull?since=0&sinceEdit=0", { headers: authHeaders() })
+              .then(function (r) { return r.json(); })
+              .then(function (data) {
+                if (data.state && data.state.isListening && data.context) {
+                  var ctx = data.context;
+                  if (ctx.recentSegments && ctx.recentSegments.length > 0) {
+                    recentSegments = ctx.recentSegments;
+                    sermonSummary = ctx.sermonSummary || "";
+                    lastEnglishTail = ctx.lastEnglishTail || "";
+                    // Rebuild allSegments from recentSegments (best effort)
+                    allSegments = ctx.recentSegments.slice();
+                    log("Session recovered: " + recentSegments.length + " segments restored.", "info");
+                    toast("Session context recovered from Redis");
+                  }
+                }
+              })
+              .catch(function () {});
+          })();
+          (function scheduleCommandPoll() {
+            pollCommands().then(function () {
+              setTimeout(scheduleCommandPoll, _pollBackoff.commands);
+            });
+          })();
         }
       });
 
       // ════════════════════════════════════════════════════════════
-      //  RESIZE CONSOLE DRAWER
+      //  RESIZE FACTORY — shared by console drawer, remote, viewer
+      //  Includes touch momentum (inertia on release)
       // ════════════════════════════════════════════════════════════
-      (function () {
-        var handle = document.getElementById("resize-handle");
-        var drawer = document.getElementById("console-drawer");
-        var startY = 0;
-        var startH = 0;
-        var dragging = false;
+      function initResizeHandle(handle, panel) {
+        var startY = 0, startH = 0, dragging = false;
+        var lastY = 0, lastT = 0, velocityY = 0, cancelMom = null;
+        var friction = 0.92, minV = 0.5;
 
+        function clampH(h) {
+          return Math.max(160, Math.min(h, window.innerHeight * 0.9));
+        }
+
+        function animateMomentum() {
+          var raf;
+          (function tick() {
+            velocityY *= friction;
+            if (Math.abs(velocityY) < minV) return;
+            var cur = panel.offsetHeight;
+            var next = clampH(cur + velocityY);
+            panel.style.height = next + "px";
+            if (next === cur) return;
+            raf = requestAnimationFrame(tick);
+          })();
+          return function () { cancelAnimationFrame(raf); };
+        }
+
+        // Mouse
         handle.addEventListener("mousedown", function (e) {
           dragging = true;
           startY = e.clientY;
-          startH = drawer.offsetHeight;
+          startH = panel.offsetHeight;
           document.body.style.userSelect = "none";
           e.preventDefault();
+          function onMove(ev) {
+            panel.style.height = clampH(startH - (ev.clientY - startY)) + "px";
+          }
+          function onUp() {
+            dragging = false;
+            document.body.style.userSelect = "";
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+          }
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
         });
 
-        document.addEventListener("mousemove", function (e) {
-          if (!dragging) return;
-          var delta = startY - e.clientY; // drag up = bigger
-          var newH = Math.min(
-            Math.max(startH + delta, 160),
-            window.innerHeight * 0.9,
-          );
-          drawer.style.height = newH + "px";
-        });
+        // Touch with momentum
+        handle.addEventListener("touchstart", function (e) {
+          if (cancelMom) { cancelMom(); cancelMom = null; }
+          startY = e.touches[0].clientY;
+          startH = panel.offsetHeight;
+          lastY = startY; lastT = Date.now(); velocityY = 0;
+          e.preventDefault();
+          function onMove(ev) {
+            ev.preventDefault();
+            var y = ev.touches[0].clientY;
+            var now = Date.now();
+            var dt = now - lastT || 1;
+            velocityY = -(y - lastY) / dt * 16;
+            lastY = y; lastT = now;
+            panel.style.height = clampH(startH - (y - startY)) + "px";
+          }
+          function onEnd() {
+            document.removeEventListener("touchmove", onMove);
+            document.removeEventListener("touchend", onEnd);
+            if (Math.abs(velocityY) > 1) cancelMom = animateMomentum();
+          }
+          document.addEventListener("touchmove", onMove, { passive: false });
+          document.addEventListener("touchend", onEnd);
+        }, { passive: false });
+      }
 
-        document.addEventListener("mouseup", function () {
-          dragging = false;
-          document.body.style.userSelect = "";
-        });
-
-        // Touch support
-        handle.addEventListener(
-          "touchstart",
-          function (e) {
-            dragging = true;
-            startY = e.touches[0].clientY;
-            startH = drawer.offsetHeight;
-            e.preventDefault();
-          },
-          { passive: false },
-        );
-
-        document.addEventListener(
-          "touchmove",
-          function (e) {
-            if (!dragging) return;
-            var delta = startY - e.touches[0].clientY;
-            var newH = Math.min(
-              Math.max(startH + delta, 160),
-              window.innerHeight * 0.9,
-            );
-            drawer.style.height = newH + "px";
-          },
-          { passive: true },
-        );
-
-        document.addEventListener("touchend", function () {
-          dragging = false;
-        });
-      })();
+      initResizeHandle(
+        document.getElementById("resize-handle"),
+        document.getElementById("console-drawer")
+      );
     </script>
   </body>
 </html>

@@ -31,13 +31,15 @@ exports.handler = async (event) => {
     const since      = parseInt(event.queryStringParameters?.since      || '0');
     const sinceEdit  = parseInt(event.queryStringParameters?.sinceEdit  || '0');
 
-    // Single pipeline: 5 keys in one Redis round-trip
-    const [transcriptRaw, stateRaw, editsRaw, typoRaw, commandRaw] = await redisPipeline(
+    // Single pipeline: 5 keys + heartbeat scan in one Redis round-trip
+    const [transcriptRaw, stateRaw, editsRaw, typoRaw, commandRaw, contextRaw, scanResult] = await redisPipeline(
       ['GET', 'sermon:transcript'],
       ['GET', 'sermon:state'],
       ['GET', 'sermon:edits'],
       ['GET', 'sermon:typo'],
-      ['GET', 'sermon:command']
+      ['GET', 'sermon:command'],
+      ['GET', 'sermon:context'],
+      ['SCAN', '0', 'MATCH', 'sermon:hb:*', 'COUNT', '100']
     );
 
     const all     = transcriptRaw ? JSON.parse(transcriptRaw) : [];
@@ -51,11 +53,16 @@ exports.handler = async (event) => {
 
     const typo    = typoRaw    ? JSON.parse(typoRaw)    : null;
     const command = commandRaw ? JSON.parse(commandRaw) : null;
+    const context = contextRaw ? JSON.parse(contextRaw) : null;
+
+    // Count connected devices from heartbeat keys (keys auto-expire after 30s)
+    const hbKeys = (scanResult && scanResult[1]) || [];
+    const connectedDevices = hbKeys.length;
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries, state, edits, typo, command })
+      body: JSON.stringify({ entries, state, edits, typo, command, context, connectedDevices })
     };
   } catch (err) {
     console.error('sync-pull error:', err);
